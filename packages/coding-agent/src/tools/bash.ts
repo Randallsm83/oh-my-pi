@@ -835,6 +835,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 						timeout: options.timeoutMs ?? 0,
 						signal: runSignal,
 						env: options.resolvedEnv,
+						useUserShell: this.session.settings.get("bash.userShell"),
 						artifactPath,
 						artifactId,
 						onChunk: chunk => {
@@ -1410,6 +1411,7 @@ export class BashTool implements AgentTool<typeof bashSchemaBase | typeof bashSc
 					timeout: timeoutMs ?? 0,
 					signal,
 					env: resolvedEnv,
+					useUserShell: this.session.settings.get("bash.userShell"),
 					artifactPath,
 					artifactId,
 					onChunk: streamTailUpdates(tailBuffer, onUpdate),

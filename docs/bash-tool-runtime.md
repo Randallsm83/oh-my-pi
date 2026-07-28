@@ -136,6 +136,8 @@ If the selected shell includes `bash`, it attempts `getOrCreateSnapshot()`:
 - snapshot creation is best-effort,
 - failure falls back to no snapshot.
 
+By default the tool path does not wrap commands in the user shell. Set `bash.userShell: true` to route model-facing bash tool commands through the configured user shell — the same `useUserShell` wrap that user `!` bang commands use. When the resolved shell (from `settings.getShellConfig()`, honoring `shellPath`) is zsh or fish, the command is wrapped as `'<shell>' '-l' '-i' '-c' '<command>'` and executed inside the embedded brush shell, so rc files, aliases, and functions apply. Bash shells keep the snapshot mechanism above, and cmd.exe is never wrapped.
+
 If `prefix` is configured, it wraps the command after any direnv unset prefix.
 
 The per-command child environment is then built by `buildNonInteractiveEnv()` (`src/exec/non-interactive-env.ts`), which layers non-interactive hardening defaults **under** the caller and direnv overrides:

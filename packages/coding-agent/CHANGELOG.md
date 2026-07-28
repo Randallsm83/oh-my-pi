@@ -1463,6 +1463,9 @@
 - Fixed omp worktree clear prematurely deleting active task-isolation sandboxes owned by running subagents.
 - Fixed /vibe mode preventing the director from completing parent tasks after verifying worker results by keeping the built-in todo tool active.
 - Fixed numeric GitHub issue and pull request autocomplete being suppressed inside skill slash-command arguments.
+### Added
+
+- Added the `bash.userShell` setting (default `false`): when enabled, model-facing bash tool commands are routed through the configured user shell — the same `useUserShell` wrap that user `!` bang commands use — so zsh/fish rc files, aliases, and functions apply. The shell is resolved from `settings.getShellConfig()` honoring `shellPath`; bash shells keep the snapshot mechanism and cmd.exe is never wrapped.
 
 ## [17.1.7] - 2026-07-27
 

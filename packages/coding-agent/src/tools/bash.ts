@@ -103,6 +103,7 @@ import {
 	cfgBashInterceptorEnabled,
 	cfgBashInterceptorPatterns,
 	cfgBashPatterns,
+	cfgBashUserShell,
 } from "../exec/settings";
 import { cfgDisplayShellVisualization } from "../modes/settings";
 import { cfgSkillful } from "../session/settings";
@@ -1451,6 +1452,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 							toolCallId: options.toolCallId,
 						}).shellFilesystem(),
 						speech: sessionShellSpeech(this.session),
+						useUserShell: cfgBashUserShell.get(this.session.settings),
 						artifactPath,
 						artifactId,
 						onChunk: chunk => {
@@ -2311,6 +2313,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 						toolCallId,
 					}).shellFilesystem(),
 					speech: sessionShellSpeech(this.session),
+					useUserShell: cfgBashUserShell.get(this.session.settings),
 					artifactPath,
 					artifactId,
 					// Stream the sink's own inline view rather than re-buffering chunks.

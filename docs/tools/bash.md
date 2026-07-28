@@ -232,6 +232,7 @@ Choose the setting by the desired outcome:
   - `echo|printf|cat <<` with redirection -> `write`
 - PTY mode is ignored in non-UI contexts and when `PI_NO_PTY=1` (gated by `canUseInteractiveBashPty()`); the tool falls back to non-PTY execution and appends a `pty requested but unavailable in this environment; ran without a terminal` notice.
 - Non-PTY runs merge `NON_INTERACTIVE_ENV` with `env` via `buildNonInteractiveEnv()`; PTY runs instead inherit the user environment with `TERM=xterm-256color` prepended before the custom `env` values.
+- `bash.userShell: true` (default `false`) routes non-PTY tool commands through the configured user shell via `executeBash()`'s `useUserShell` wrap — the same path user `!` bang commands use. zsh/fish shells run the command as `'<shell>' '-l' '-i' '-c' '<cmd>'` inside the embedded brush shell (rc files, aliases, functions apply); bash keeps its snapshot mechanism and cmd.exe is never wrapped.
 - When the shell minimizer rewrites output inside `executeBash()`, the visible output is replaced with minimized text and a `[raw output: artifact://<id>]` footer may be appended if `onMinimizedSave` persisted the original text.
 - The TUI renderer parses partial JSON to recover `env` assignments early in streaming previews; that behavior is display-only.
 - For executor internals that are not tool-specific — shell session reuse keys, snapshots, prefix handling, and native timeout behavior — see `docs/bash-tool-runtime.md`.

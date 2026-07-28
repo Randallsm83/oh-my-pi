@@ -11,14 +11,15 @@ afterEach(() => {
 	mock.restore();
 });
 
-function makeSession(): ToolSession {
+function makeSession(settingsOverrides: Record<string, unknown> = {}): ToolSession {
 	return {
-		cwd: "/tmp",
+		cwd: os.tmpdir(),
 		hasUI: false,
 		skills: [],
 		getSessionFile: () => null,
 		settings: {
 			get(key: string) {
+				if (Object.hasOwn(settingsOverrides, key)) return settingsOverrides[key];
 				if (key === "async.enabled") return false;
 				if (key === "bash.autoBackground.enabled") return false;
 				if (key === "bash.autoBackground.thresholdMs") return 60_000;

@@ -16,7 +16,7 @@ afterEach(() => {
 
 function makeSession(): ToolSession {
 	return {
-		cwd: "/tmp",
+		cwd: os.tmpdir(),
 		hasUI: false,
 		skills: [],
 		getSessionFile: () => null,

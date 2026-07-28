@@ -70,6 +70,7 @@ import {
 	cfgBashInterceptorEnabled,
 	cfgBashInterceptorPatterns,
 	cfgBashPatterns,
+	cfgBashUserShell,
 } from "../exec/settings";
 import { cfgSkillful } from "../session/settings";
 import { cfgWorktreeClone } from "../task/settings";
@@ -852,6 +853,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 						signal: runSignal,
 						// Bound to the job's own signal: the job outlives the call that started it.
 						filesystem: this.#urlFilesystem(runSignal, options.approvalTier).shellFilesystem(),
+						useUserShell: cfgBashUserShell.get(this.session.settings),
 						artifactPath,
 						artifactId,
 						onPreview: text => {
@@ -1522,6 +1524,7 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 					timeout: timeoutMs ?? 0,
 					signal,
 					filesystem: this.#urlFilesystem(signal, approvalTier).shellFilesystem(),
+					useUserShell: cfgBashUserShell.get(this.session.settings),
 					artifactPath,
 					artifactId,
 					// Stream the sink's own inline view rather than re-buffering chunks.

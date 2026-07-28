@@ -104,6 +104,19 @@ export const cfgBashAllowCompoundCommands = register({
 	},
 });
 
+export const cfgBashUserShell = register({
+	id: "bash.userShell",
+	type: "boolean",
+	default: false,
+	ui: {
+		tab: "shell",
+		group: "Bash",
+		label: "Bash User Shell",
+		description:
+			"Route bash tool commands through the configured user shell (shellPath / $SHELL) so zsh/fish rc files, aliases, and functions are loaded. Bash shells keep using the snapshot mechanism.",
+	},
+});
+
 export const cfgBashAutoBackgroundEnabled = register({
 	id: "bash.autoBackground.enabled",
 	protocolDefault: ["rpc"],

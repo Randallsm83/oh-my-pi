@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
+import * as os from "node:os";
+import * as bashExecutor from "@oh-my-pi/pi-coding-agent/exec/bash-executor";
 import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
 import { BashTool } from "@oh-my-pi/pi-coding-agent/tools/bash";
 import { Shell } from "@oh-my-pi/pi-natives";
@@ -7,14 +9,15 @@ afterEach(() => {
 	mock.restore();
 });
 
-function makeSession(): ToolSession {
+function makeSession(settingsOverrides: Record<string, unknown> = {}): ToolSession {
 	return {
-		cwd: "/tmp",
+		cwd: os.tmpdir(),
 		hasUI: false,
 		skills: [],
 		getSessionFile: () => null,
 		settings: {
 			get(key: string) {
+				if (Object.hasOwn(settingsOverrides, key)) return settingsOverrides[key];
 				if (key === "async.enabled") return false;
 				if (key === "bash.autoBackground.enabled") return false;
 				if (key === "bash.autoBackground.thresholdMs") return 60_000;
@@ -110,6 +113,36 @@ describe("BashTool execution results", () => {
 
 			expect(result.isError).toBeUndefined();
 			expect(stdout).toBe(scenario.expected);
+		}
+	});
+});
+
+describe("BashTool user shell forwarding", () => {
+	it("forwards the bash.userShell setting to executeBash", async () => {
+		const spy = spyOn(bashExecutor, "executeBash").mockResolvedValue({
+			output: "ok",
+			exitCode: 0,
+			cancelled: false,
+			truncated: false,
+			totalLines: 1,
+			totalBytes: 3,
+			outputLines: 1,
+			outputBytes: 3,
+		});
+
+		try {
+			const enabledTool = new BashTool(makeSession({ "bash.userShell": true }));
+			await enabledTool.execute("call-user-shell-on", { command: "echo hi" });
+			expect(spy).toHaveBeenCalledTimes(1);
+			expect(spy.mock.calls[0]?.[1]?.useUserShell).toBe(true);
+
+			spy.mockClear();
+			const disabledTool = new BashTool(makeSession({ "bash.userShell": false }));
+			await disabledTool.execute("call-user-shell-off", { command: "echo hi" });
+			expect(spy).toHaveBeenCalledTimes(1);
+			expect(spy.mock.calls[0]?.[1]?.useUserShell).toBe(false);
+		} finally {
+			spy.mockRestore();
 		}
 	});
 });

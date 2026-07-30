@@ -110,8 +110,12 @@ export async function runInteractiveBashPty(
 							cwd: options.cwd,
 							timeoutMs: options.timeoutMs,
 							// A real TERM so editors, pagers, and TUIs behave like a normal
-							// terminal; direnv's values win over everything.
-							env: { ...interactiveShellEnv, TERM: "xterm-256color", ...options.env },
+							// terminal; direnv's values win over everything. Unlike the
+							// non-interactive path this is a LOGIN shell, so the agent marker
+							// has to be explicit: rc files that gate on OMPCODE + a `-c`
+							// invocation see neither here, and without the marker the system
+							// profile loads instead of the user's agent config.
+							env: { ...interactiveShellEnv, TERM: "xterm-256color", OMP_AGENT_SHELL: "1", ...options.env },
 							signal: options.signal,
 							cols,
 							rows,

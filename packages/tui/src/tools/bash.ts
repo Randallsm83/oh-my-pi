@@ -11,6 +11,7 @@ import {
 	formatToolWorkingDirectory,
 	previewWindowRows,
 	replaceTabs,
+	styleOutputLine,
 } from "../render/render-utils";
 import {
 	formatMinimizedMeta,
@@ -607,7 +608,7 @@ export function createShellRenderer<TArgs>(config: ShellRendererConfig<TArgs>) {
 							edge: "tail",
 							visual: true,
 							width: contentWidth,
-							styleLine: line => uiTheme.fg("toolOutput", replaceTabs(line)),
+							styleLine: line => styleOutputLine(replaceTabs(line), uiTheme),
 							uncapSixel: true,
 						},
 						uiTheme,

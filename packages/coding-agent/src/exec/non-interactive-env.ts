@@ -89,6 +89,31 @@ const WINDOWS_PYTHON_UTF8_ENV: Readonly<Record<string, string>> = {
 	PYTHONUTF8: "1",
 };
 
+/**
+ * Overrides that ask color-aware tools to emit SGR even though stdout is a
+ * pipe. Covers the two conventions with broad support: `CLICOLOR_FORCE` (Rust
+ * `clicolors`, delta, BSD-style tools) and `FORCE_COLOR` (Node/chalk, cargo).
+ * Tools that only honor an explicit `--color=always` flag — eza, GNU ls,
+ * ripgrep — are unreachable from the environment; forcing those is the user
+ * shell's job, not ours.
+ */
+const COLOR_ENV: Readonly<Record<string, string>> = {
+	TERM: "xterm-256color",
+	COLORTERM: "truecolor",
+	CLICOLOR: "1",
+	CLICOLOR_FORCE: "1",
+	FORCE_COLOR: "3",
+};
+
+function colorEnabledBase(): Record<string, string> {
+	const env: Record<string, string> = { ...NON_INTERACTIVE_ENV, ...COLOR_ENV };
+	// Must be ABSENT, not empty: the Rust ecosystem checks
+	// `env::var_os("NO_COLOR").is_some()`, so `NO_COLOR=""` still reads as
+	// "colors disabled" for eza/delta/ripgrep.
+	delete env.NO_COLOR;
+	return env;
+}
+
 function hasEnvValue(
 	env: Record<string, string | undefined> | undefined,
 	key: string,
@@ -139,18 +164,20 @@ export interface NonInteractiveEnvOptions {
 	platform?: NodeJS.Platform;
 	/** Keep the inherited locale instead of pinning {@link AGENT_LOCALE_ENV}: user-typed `!` commands. */
 	inheritLocale?: boolean;
+	/** Emit color instead of forcing `TERM=dumb` / `NO_COLOR=1`. */
+	color?: boolean;
 }
 
 /** Builds the per-command environment for non-interactive child processes. */
 export function buildNonInteractiveEnv(
 	overrides?: Record<string, string>,
-	{ baseEnv = Bun.env, platform = process.platform, inheritLocale = false }: NonInteractiveEnvOptions = {},
+	{ baseEnv = Bun.env, platform = process.platform, inheritLocale = false, color = false }: NonInteractiveEnvOptions = {},
 ): Record<string, string> {
 	// `PI_BASH_NO_CI` (and its legacy alias) opts out of the automatic `CI=true`
 	// injection. Mirrors the session-env gate in `procmgr.ts` so the opt-out
 	// reaches the per-command env, which otherwise overrides the session value.
-	const env: Record<string, string> =
-		baseEnv.PI_BASH_NO_CI || baseEnv.CLAUDE_BASH_NO_CI ? withoutCI(NON_INTERACTIVE_ENV) : { ...NON_INTERACTIVE_ENV };
+	const colorBase = color ? colorEnabledBase() : { ...NON_INTERACTIVE_ENV };
+	const env = baseEnv.PI_BASH_NO_CI || baseEnv.CLAUDE_BASH_NO_CI ? withoutCI(colorBase) : colorBase;
 
 	// Agent commands pin the locale whatever the launcher inherited, so sort
 	// order, number formats, and messages do not vary by machine; a locale in

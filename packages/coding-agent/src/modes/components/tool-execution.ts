@@ -21,7 +21,7 @@ import { BASH_DEFAULT_PREVIEW_LINES } from "../../tools/bash";
 import { formatDefaultToolExecution } from "../../tools/default-renderer";
 import { EVAL_DEFAULT_PREVIEW_LINES } from "../../tools/eval";
 import { isWaitingPollDetails } from "../../tools/hub";
-import { formatStatusIcon, replaceTabs, resolveImageOptions } from "../../tools/render-utils";
+import { formatStatusIcon, replaceTabs, resolveImageOptions, styleOutputBlock } from "../../tools/render-utils";
 import {
 	type FirstResultViewportRepaint,
 	type ToolActivitySummary,
@@ -1017,7 +1017,7 @@ export class ToolExecutionComponent extends Container {
 							new SafeToolRendererComponent(this.#toolName, "result", resultComponent, () => {
 								const output = this.#getTextOutput();
 								if (!output) return undefined;
-								return new Text(theme.fg("toolOutput", replaceTabs(output)), 0, 0);
+								return new Text(styleOutputBlock(replaceTabs(output), theme), 0, 0);
 							}),
 						);
 					}
@@ -1026,14 +1026,14 @@ export class ToolExecutionComponent extends Container {
 					// Fall back to showing raw output on error
 					const output = this.#getTextOutput();
 					if (output) {
-						this.#contentBox.addChild(new Text(theme.fg("toolOutput", replaceTabs(output)), 0, 0));
+						this.#contentBox.addChild(new Text(styleOutputBlock(replaceTabs(output), theme), 0, 0));
 					}
 				}
 			} else if (this.#result) {
 				// Has result but no custom renderResult
 				const output = this.#getTextOutput();
 				if (output) {
-					this.#contentBox.addChild(new Text(theme.fg("toolOutput", replaceTabs(output)), 0, 0));
+					this.#contentBox.addChild(new Text(styleOutputBlock(replaceTabs(output), theme), 0, 0));
 				}
 			}
 			// Custom tools that draw their own frame (task) render flush; plain
@@ -1163,7 +1163,7 @@ export class ToolExecutionComponent extends Container {
 								new SafeToolRendererComponent(this.#toolName, "result", resultComponent, () => {
 									const output = this.#getTextOutput();
 									if (!output) return undefined;
-									return new Text(theme.fg("toolOutput", replaceTabs(output)), 0, 0);
+									return new Text(styleOutputBlock(replaceTabs(output), theme), 0, 0);
 								}),
 							);
 						}
@@ -1172,7 +1172,7 @@ export class ToolExecutionComponent extends Container {
 						// Fall back to showing raw output on error
 						const output = this.#getTextOutput();
 						if (output) {
-							this.#contentBox.addChild(new Text(theme.fg("toolOutput", replaceTabs(output)), 0, 0));
+							this.#contentBox.addChild(new Text(styleOutputBlock(replaceTabs(output), theme), 0, 0));
 						}
 					}
 				}

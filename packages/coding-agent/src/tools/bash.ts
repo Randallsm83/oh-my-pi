@@ -59,6 +59,7 @@ import {
 	formatToolWorkingDirectory,
 	previewWindowRows,
 	replaceTabs,
+	styleOutputLine,
 } from "./render-utils";
 import { extractLeadingCdTarget, extractLiteralAndChainSegments, tokenizeShellSegments } from "./shell-tokenize";
 import { ToolAbortError, ToolError } from "./tool-errors";
@@ -1821,14 +1822,14 @@ export function createShellRenderer<TArgs>(config: ShellRendererConfig<TArgs>) {
 						if (hasSixelOutput) {
 							outputLines.push(
 								...rawOutputLines.map((line, index) =>
-									sixelLineMask?.[index] ? line : uiTheme.fg("toolOutput", replaceTabs(line)),
+									sixelLineMask?.[index] ? line : styleOutputLine(replaceTabs(line), uiTheme),
 								),
 							);
 						} else if (expanded) {
-							outputLines.push(...rawOutputLines.map(line => uiTheme.fg("toolOutput", replaceTabs(line))));
+							outputLines.push(...rawOutputLines.map(line => styleOutputLine(replaceTabs(line), uiTheme)));
 						} else {
 							const styledOutput = rawOutputLines
-								.map(line => uiTheme.fg("toolOutput", replaceTabs(line)))
+								.map(line => styleOutputLine(replaceTabs(line), uiTheme))
 								.join("\n");
 							const textContent = styledOutput;
 							// Cap the collapsed/streaming output to a viewport-sized tail and

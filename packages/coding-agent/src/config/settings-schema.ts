@@ -3929,6 +3929,18 @@ export const SETTINGS_SCHEMA = {
 		},
 	},
 
+	"bash.color": {
+		type: "boolean",
+		default: false,
+		ui: {
+			tab: "shell",
+			group: "Bash",
+			label: "Bash Colored Output",
+			description:
+				"Let shell commands emit color (real TERM, no NO_COLOR) and replay the safe subset of styles in the transcript instead of repainting all output in one color. Colored output costs escape-sequence tokens in the model's view; tools that only honor an explicit --color=always flag still need it from your shell rc.",
+		},
+	},
+
 	"bash.autoBackground.enabled": {
 		type: "boolean",
 		default: true,

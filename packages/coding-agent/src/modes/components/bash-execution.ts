@@ -17,13 +17,12 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@oh-my-pi/pi-tui";
-import { sanitizeText } from "@oh-my-pi/pi-utils";
 import type { Terminal as XtermTerminalType } from "@oh-my-pi/pi-utils/vterm";
 import { theme } from "../../modes/theme/theme";
 import { loadXtermTerminal } from "../../tools/bash-interactive";
 import type { TruncationMeta } from "../../tools/output-meta";
-import { resolveImageOptions } from "../../tools/render-utils";
-import { readTerminalRows, styleTerminalRow } from "../../tools/terminal-output";
+import { resolveImageOptions, styleOutputLine } from "../../tools/render-utils";
+import { readTerminalRows, sanitizeTextKeepingSafeSgr, styleTerminalRow } from "../../tools/terminal-output";
 import { getSixelLineMask, isSixelPassthroughEnabled, sanitizeWithOptionalSixelPassthrough } from "../../utils/sixel";
 import {
 	buildExecutionFrame,
@@ -360,9 +359,13 @@ export class BashExecutionComponent extends Container {
 		}
 	}
 
-	/** PTY replay rows arrive pre-styled (safe SGR + reset); plain lines get muted. */
+	/**
+	 * PTY replay rows arrive pre-styled (safe SGR + reset). Plain lines render
+	 * their own retained colors over the muted base rather than being repainted
+	 * flat, so `bash.color` output keeps eza/git/ls palettes in the transcript.
+	 */
 	#styleDisplayLine(line: string): string {
-		return this.#ptyMode ? line : theme.fg("muted", line);
+		return this.#ptyMode ? line : styleOutputLine(line, theme, "muted");
 	}
 
 	#clampDisplayLine(line: string): string {
@@ -384,7 +387,7 @@ export class BashExecutionComponent extends Container {
 	}
 
 	#setOutput(output: string): void {
-		const clean = sanitizeWithOptionalSixelPassthrough(output, sanitizeText);
+		const clean = sanitizeWithOptionalSixelPassthrough(output, sanitizeTextKeepingSafeSgr);
 		this.#outputLines = clean ? this.#clampLinesPreservingSixel(clean.split("\n")) : [];
 	}
 

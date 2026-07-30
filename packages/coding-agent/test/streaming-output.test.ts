@@ -807,3 +807,70 @@ describe("OutputSink maxColumns (per-line cap)", () => {
 		expect(elided + dropped).toBeLessThan(dumped.totalBytes);
 	});
 });
+
+describe("OutputSink escape handling", () => {
+	test("strips every escape by default", async () => {
+		const sink = new OutputSink();
+		await sink.push("\x1b[31mred\x1b[0m\n");
+
+		expect((await sink.dump()).output).toBe("red\n");
+	});
+
+	test("does not leak a CSI body when a chunk boundary splits an escape", async () => {
+		const sink = new OutputSink();
+		await sink.push("M\x1b");
+		await sink.push("[38;2;227;148;0m file\n");
+
+		expect((await sink.dump()).output).toBe("M file\n");
+	});
+
+	test("reassembles an escape split across pushes when keeping SGR", async () => {
+		const sink = new OutputSink({ keepSgr: true });
+		await sink.push("plain \x1b[38;2;227");
+		await sink.push(";148;0mcolored\x1b[0m\n");
+
+		expect((await sink.dump()).output).toBe("plain \x1b[38;2;227;148;0mcolored\x1b[0m\n");
+	});
+
+	test("keeps basic color slots real commands emit", async () => {
+		const sink = new OutputSink({ keepSgr: true });
+		await sink.push("\x1b[01;34mdir\x1b[0m\n");
+
+		expect((await sink.dump()).output).toBe("\x1b[1;34mdir\x1b[0m\n");
+	});
+
+	test("splits a reset out of a compound sequence so the base color re-applies", async () => {
+		const sink = new OutputSink({ keepSgr: true });
+		await sink.push("\x1b[0;32mok\n");
+
+		expect((await sink.dump()).output).toBe("\x1b[0m\x1b[32mok\n");
+	});
+
+	test("drops non-SGR escapes even when keeping SGR", async () => {
+		const sink = new OutputSink({ keepSgr: true });
+		await sink.push("\x1b[1;31mbold\x1b[0m\x1b[2Kcleared\n");
+
+		expect((await sink.dump()).output).toBe("\x1b[1;31mbold\x1b[0mcleared\n");
+	});
+
+	test("charges the column cap only for visible bytes and never cuts an escape", async () => {
+		const sink = new OutputSink({ keepSgr: true, maxColumns: 8, spillThreshold: 10_000 });
+		await sink.push(`\x1b[31m${"x".repeat(40)}\x1b[0m\n`);
+
+		const line = (await sink.dump()).output.split("\n")[0] ?? "";
+		// Budget 8 = 5 kept bytes + the 3-byte ellipsis; the escapes cost nothing,
+		// so the colored line keeps exactly what the same plain line would.
+		expect(line.replace(/\x1b\[[0-9;]*m/g, "")).toBe(`${"x".repeat(5)}…`);
+		expect(line).toBe(`\x1b[31mxxxxx\x1b[0m…`);
+	});
+
+	test("keeps the same visible text as the equivalent uncolored line", async () => {
+		const colored = new OutputSink({ keepSgr: true, maxColumns: 8, spillThreshold: 10_000 });
+		const plain = new OutputSink({ maxColumns: 8, spillThreshold: 10_000 });
+		await colored.push(`\x1b[31m${"x".repeat(40)}\x1b[0m\n`);
+		await plain.push(`${"x".repeat(40)}\n`);
+
+		const coloredOutput = (await colored.dump()).output.replace(/\x1b\[[0-9;]*m/g, "");
+		expect(coloredOutput).toBe((await plain.dump()).output);
+	});
+});

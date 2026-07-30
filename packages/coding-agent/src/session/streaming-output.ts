@@ -1,5 +1,6 @@
 import type { AgentToolUpdateCallback } from "@oh-my-pi/pi-agent-core";
 import { formatBytes, sanitizeText } from "@oh-my-pi/pi-utils";
+import { sanitizeTextKeepingSafeSgr } from "../tools/terminal-output";
 import { sanitizeWithOptionalSixelPassthrough } from "../utils/sixel";
 
 // =============================================================================
@@ -72,6 +73,13 @@ export interface OutputSinkOptions {
 	 * writes still respect the budget. Default 0 = no per-line cap.
 	 */
 	maxColumns?: number;
+	/**
+	 * Keep the SGR sequences the transcript is allowed to replay instead of
+	 * stripping every escape. Only meaningful when the producer was actually
+	 * asked for color (see `bash.color`); with color off there is no SGR to
+	 * keep and this is a no-op.
+	 */
+	keepSgr?: boolean;
 	onChunk?: (chunk: string) => void;
 	/** Minimum ms between onChunk calls. 0 = every chunk (default). */
 	chunkThrottleMs?: number;
@@ -253,6 +261,76 @@ export function truncateTailBytes(data: string | Uint8Array, maxBytes: number): 
  */
 export function truncateHeadBytes(data: string | Uint8Array, maxBytes: number): ByteTruncationResult {
 	return truncateBytesWindowed(data, maxBytes, "head");
+}
+
+const SGR_ESC = "\x1b";
+const SGR_RESET = "\x1b[0m";
+
+/**
+ * A trailing INCOMPLETE escape sequence: a lone ESC, or a CSI whose final byte
+ * has not arrived yet. A pipe or PTY read can split a sequence anywhere, and
+ * sanitizing half of one eats the ESC while leaving the CSI body behind as
+ * literal text (`[38;2;227;148;0m` in the transcript). The partial tail is held
+ * back and prepended to the next chunk instead.
+ */
+const PARTIAL_ESCAPE = /\x1b(?:\[[0-9;]*)?$/;
+
+/**
+ * Ceiling on the held-back tail, so a never-terminated "escape" cannot pin
+ * memory. Sized past the widest sequence this feature actually produces: a
+ * combined truecolor fg+bg with a leading attribute (delta's default output)
+ * reaches 37 chars at three digits per component.
+ */
+const MAX_PARTIAL_ESCAPE_LENGTH = 48;
+
+/**
+ * Byte length of `text` charging nothing for SGR sequences. A per-line column
+ * budget must count only visible bytes, otherwise a colored line loses real
+ * text that the same plain line would have kept.
+ *
+ * Relies on the sink's SGR-preserving sanitizer having already dropped every
+ * other escape form, so `ESC … m` is the only sequence shape that can appear.
+ */
+function visibleByteLength(text: string): number {
+	if (!text.includes(SGR_ESC)) return Buffer.byteLength(text, "utf-8");
+
+	let bytes = 0;
+	let cursor = 0;
+	while (cursor < text.length) {
+		const esc = text.indexOf(SGR_ESC, cursor);
+		if (esc === -1) return bytes + Buffer.byteLength(text.slice(cursor), "utf-8");
+		bytes += Buffer.byteLength(text.slice(cursor, esc), "utf-8");
+		const end = text.indexOf("m", esc);
+		if (end === -1) return bytes;
+		cursor = end + 1;
+	}
+	return bytes;
+}
+
+/**
+ * Head-truncates to `maxBytes` of VISIBLE bytes, never cutting inside an SGR
+ * sequence — a mid-escape cut would leave the CSI body behind as literal text.
+ * `bytes` counts visible bytes only; the caller emits the closing reset.
+ */
+function truncateVisibleHeadBytes(text: string, maxBytes: number): ByteTruncationResult {
+	if (!text.includes(SGR_ESC)) return truncateHeadBytes(text, maxBytes);
+
+	let kept = "";
+	let visible = 0;
+	let cursor = 0;
+	while (cursor < text.length) {
+		const esc = text.indexOf(SGR_ESC, cursor);
+		const plain = text.slice(cursor, esc === -1 ? text.length : esc);
+		const slice = truncateHeadBytes(plain, maxBytes - visible);
+		kept += slice.text;
+		visible += slice.bytes;
+		if (esc === -1 || slice.bytes < Buffer.byteLength(plain, "utf-8")) break;
+		const end = text.indexOf("m", esc);
+		if (end === -1) break;
+		kept += text.slice(esc, end + 1);
+		cursor = end + 1;
+	}
+	return { text: kept, bytes: visible };
 }
 
 // =============================================================================
@@ -772,6 +850,13 @@ export class OutputSink {
 	readonly #onChunk?: (chunk: string) => void;
 	readonly #chunkThrottleMs: number;
 	readonly #maxColumns: number;
+	readonly #keepSgr: boolean;
+	/**
+	 * Trailing partial escape sequence carried into the next {@link push}. Never
+	 * flushed on finalize: an escape that never completed has no visible bytes,
+	 * which is exactly what the sanitizer would have dropped anyway.
+	 */
+	#pendingEscape = "";
 
 	// Optional artifact-on-disk cap. When `#artifactMaxBytes > 0` the file sink
 	// owns a head budget + a rolling tail buffer; once the head is closed,
@@ -795,6 +880,7 @@ export class OutputSink {
 			spillThreshold = DEFAULT_MAX_BYTES,
 			headBytes = 0,
 			maxColumns = 0,
+			keepSgr = false,
 			onChunk,
 			chunkThrottleMs = 0,
 			artifactMaxBytes = ARTIFACT_DEFAULT_MAX_BYTES,
@@ -805,6 +891,7 @@ export class OutputSink {
 		this.#spillThreshold = spillThreshold;
 		this.#headLimit = Math.max(0, Math.min(headBytes, Math.floor(spillThreshold / 2)));
 		this.#maxColumns = Math.max(0, maxColumns);
+		this.#keepSgr = keepSgr;
 		this.#onChunk = onChunk;
 		this.#chunkThrottleMs = chunkThrottleMs;
 		this.#artifactMaxBytes = Math.max(0, artifactMaxBytes);
@@ -851,7 +938,18 @@ export class OutputSink {
 	 */
 	push(chunk: string): void {
 		if (this.#finalized) return;
-		chunk = sanitizeWithOptionalSixelPassthrough(chunk, text => sanitizeText(this.#normalizeCarriageReturns(text)));
+		if (this.#pendingEscape) {
+			chunk = this.#pendingEscape + chunk;
+			this.#pendingEscape = "";
+		}
+		const partialEscape = PARTIAL_ESCAPE.exec(chunk);
+		if (partialEscape && partialEscape[0].length <= MAX_PARTIAL_ESCAPE_LENGTH) {
+			this.#pendingEscape = partialEscape[0];
+			chunk = chunk.slice(0, chunk.length - partialEscape[0].length);
+			if (chunk.length === 0) return;
+		}
+		const sanitize = this.#keepSgr ? sanitizeTextKeepingSafeSgr : sanitizeText;
+		chunk = sanitizeWithOptionalSixelPassthrough(chunk, text => sanitize(this.#normalizeCarriageReturns(text)));
 
 		// Throttled onChunk: coalesce chunks arriving inside the throttle window.
 		// A timer flushes quiet tails at the throttle boundary; dump() catches a
@@ -934,11 +1032,13 @@ export class OutputSink {
 			const segEnd = nlIdx === -1 ? chunk.length : nlIdx;
 			if (segEnd > cursor) {
 				const segment = chunk.substring(cursor, segEnd);
+				// SGR sequences are invisible, so a colored line must not be charged
+				// for them — otherwise it loses real text a plain line would keep.
+				const segBytes = this.#keepSgr ? visibleByteLength(segment) : Buffer.byteLength(segment, "utf-8");
 				if (this.#columnEllipsisAdded) {
 					// Past the cap; drop until newline.
-					this.#columnDroppedBytes += Buffer.byteLength(segment, "utf-8");
+					this.#columnDroppedBytes += segBytes;
 				} else {
-					const segBytes = Buffer.byteLength(segment, "utf-8");
 					const remaining = max - this.#currentLineBytes;
 					if (segBytes <= remaining) {
 						parts.push(segment);
@@ -951,11 +1051,16 @@ export class OutputSink {
 						let kept = "";
 						let keptBytes = 0;
 						if (headRoom > 0) {
-							const sliced = truncateHeadBytes(segment, headRoom);
+							const sliced = this.#keepSgr
+								? truncateVisibleHeadBytes(segment, headRoom)
+								: truncateHeadBytes(segment, headRoom);
 							kept = sliced.text;
 							keptBytes = sliced.bytes;
 							parts.push(kept);
 						}
+						// Close whatever style the kept prefix opened so a truncated color
+						// cannot bleed across the ellipsis into the rest of the line.
+						if (this.#keepSgr) parts.push(SGR_RESET);
 						parts.push(ELLIPSIS);
 						this.#columnDroppedBytes += segBytes - keptBytes;
 						this.#columnTruncatedLines++;

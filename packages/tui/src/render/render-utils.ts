@@ -12,10 +12,11 @@ import type { Ellipsis } from "@oh-my-pi/pi-natives";
 import { pluralize, sanitizeText } from "@oh-my-pi/pi-utils";
 import { formatKeyHints, type KeyId } from "../app-keybindings";
 import { getKeybindings } from "../keybindings";
-import type { Theme } from "../theme/theme";
+import type { Theme, ThemeColor } from "../theme/theme";
 import type { Component } from "../tui";
 import { replaceTabs, sliceByColumn, truncateToWidth, visibleWidth } from "../utils";
 import { Hasher } from "./utils";
+import { styleTerminalRow } from "../tools/terminal-output";
 
 export { Ellipsis } from "@oh-my-pi/pi-natives";
 export { replaceTabs, truncateToWidth, wrapTextWithAnsi } from "../utils";
@@ -1179,4 +1180,29 @@ function parseStringEncodedPathArray(input: string): string[] | null {
 export function toPathList(input: string | string[] | undefined): string[] {
 	if (typeof input === "string") return parseStringEncodedPathArray(input) ?? [input];
 	return input ?? [];
+}
+
+// =============================================================================
+// Colored command output
+// =============================================================================
+
+/**
+ * Styles one line of tool output. A line carrying SGR — only possible when
+ * `bash.color` let the command emit color — keeps its own styling, replayed
+ * over the theme's base foreground so a mid-line reset does not drop the rest
+ * of the line to the terminal default. Everything else takes the flat theme
+ * color, byte-identical to the previous `theme.fg(...)` call.
+ */
+export function styleOutputLine(line: string, theme: Theme, color: ThemeColor = "toolOutput"): string {
+	return line.includes("\x1b") ? styleTerminalRow(line, theme.getFgAnsi(color)) : theme.fg(color, line);
+}
+
+/** {@link styleOutputLine} applied to every line of a multi-line block. */
+export function styleOutputBlock(output: string, theme: Theme, color: ThemeColor = "toolOutput"): string {
+	if (!output.includes("\x1b")) return theme.fg(color, output);
+	const base = theme.getFgAnsi(color);
+	return output
+		.split("\n")
+		.map(line => styleTerminalRow(line, base))
+		.join("\n");
 }

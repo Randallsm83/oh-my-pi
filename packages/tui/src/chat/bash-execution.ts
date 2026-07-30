@@ -8,14 +8,13 @@ import type { Loader } from "../components/loader";
 import { Text } from "../components/text";
 import { getImageDimensions, imageFallback, ImageProtocol, TERMINAL } from "../terminal-capabilities";
 import { Container, type TUI } from "../tui";
-import { sanitizeText } from "@oh-my-pi/pi-utils";
 import type { Terminal as XtermTerminalType } from "@oh-my-pi/pi-utils/vterm";
 import { theme } from "../theme/theme";
 import type { OutputArtifactError } from "../tools/streaming-output";
 import type { TruncationMeta } from "../tools/output-meta";
-import { resolveImageOptions } from "../render/render-utils";
+import { resolveImageOptions, styleOutputLine } from "../render/render-utils";
 import { OutputPane } from "../render/output-pane";
-import { loadXtermTerminal, readTerminalRows, styleTerminalRow } from "../tools/terminal-output";
+import { loadXtermTerminal, readTerminalRows, sanitizeTextKeepingSafeSgr, styleTerminalRow } from "../tools/terminal-output";
 import { getSixelLineMask, isSixelPassthroughEnabled, sanitizeWithOptionalSixelPassthrough } from "../render/sixel";
 import {
 	buildExecutionFrame,
@@ -359,9 +358,13 @@ export class BashExecutionComponent extends Container {
 		}
 	}
 
-	/** PTY replay rows arrive pre-styled (safe SGR + reset); plain lines get muted. */
+	/**
+	 * PTY replay rows arrive pre-styled (safe SGR + reset). Plain lines render
+	 * their own retained colors over the muted base rather than being repainted
+	 * flat, so `bash.color` output keeps eza/git/ls palettes in the transcript.
+	 */
 	#styleDisplayLine(line: string): string {
-		return this.#ptyMode ? line : theme.fg("muted", line);
+		return this.#ptyMode ? line : styleOutputLine(line, theme, "muted");
 	}
 
 	#clampLinesPreservingSixel(lines: string[]): string[] {
@@ -374,7 +377,7 @@ export class BashExecutionComponent extends Container {
 	}
 
 	#setOutput(output: string): void {
-		const clean = sanitizeWithOptionalSixelPassthrough(output, sanitizeText);
+		const clean = sanitizeWithOptionalSixelPassthrough(output, sanitizeTextKeepingSafeSgr);
 		this.#outputLines = clean ? this.#clampLinesPreservingSixel(clean.split("\n")) : [];
 	}
 

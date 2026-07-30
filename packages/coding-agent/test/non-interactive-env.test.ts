@@ -84,6 +84,40 @@ describe("buildNonInteractiveEnv", () => {
 	it("lets a per-command CI override win over the opt-out", () => {
 		expect(buildNonInteractiveEnv({ CI: "0" }, { PI_BASH_NO_CI: "1" }, "linux").CI).toBe("0");
 	});
+
+	it("suppresses color unless the caller asks for it", () => {
+		const env = buildNonInteractiveEnv(undefined, {}, "linux");
+
+		expect(env.TERM).toBe("dumb");
+		expect(env.NO_COLOR).toBe("1");
+	});
+
+	it("drops NO_COLOR and forces a real terminal when color is requested", () => {
+		const env = buildNonInteractiveEnv(undefined, {}, "linux", { color: true });
+
+		// Absent, not empty: Rust tools check `env::var_os(...).is_some()`, so
+		// NO_COLOR="" would still read as "colors disabled".
+		expect(env).not.toHaveProperty("NO_COLOR");
+		expect(env.TERM).toBe("xterm-256color");
+		expect(env.COLORTERM).toBe("truecolor");
+		expect(env.CLICOLOR_FORCE).toBe("1");
+		expect(env.FORCE_COLOR).toBe("3");
+	});
+
+	it("keeps the pager and prompt guards when color is requested", () => {
+		const env = buildNonInteractiveEnv(undefined, {}, "linux", { color: true });
+
+		expect(env.PAGER).toBe("cat");
+		expect(env.GIT_PAGER).toBe("cat");
+		expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+		expect(env.CI).toBe("true");
+	});
+
+	it("lets a per-command override win over the color defaults", () => {
+		const env = buildNonInteractiveEnv({ TERM: "screen-256color" }, {}, "linux", { color: true });
+
+		expect(env.TERM).toBe("screen-256color");
+	});
 });
 
 it("filters expanded dotenv values while preserving matching and empty launcher values", async () => {

@@ -63,6 +63,17 @@
 ### Removed
 
 - Removed the librarian agent.
+### Added
+
+- Added the `bash.userShell` setting (default `false`): when enabled, model-facing bash tool commands are routed through the configured user shell — the same `useUserShell` wrap that user `!` bang commands use — so zsh/fish rc files, aliases, and functions apply. The shell is resolved from `settings.getShellConfig()` honoring `shellPath`; bash shells keep the snapshot mechanism and cmd.exe is never wrapped.
+- Added the `bash.color` setting (default `false`): shell commands run with a real `TERM`/`COLORTERM` and no `NO_COLOR` (plus `CLICOLOR_FORCE`/`FORCE_COLOR`) instead of the colorless non-interactive defaults, the output sink keeps the SGR subset the transcript is allowed to replay instead of stripping every escape, and bash output renders each line's own colors over the theme's `toolOutput`/`muted` base rather than being repainted in one flat color. Applies to both model-issued bash calls and user `!` commands. Colored output costs escape-sequence tokens in the model's view of the result, and tools that only honor an explicit `--color=always` flag (eza, GNU `ls`, ripgrep) still need it from the shell's rc files — no environment variable reaches them.
+
+### Fixed
+
+- Published terminal-title state as a pane-local `OMP_TITLE` WezTerm user variable, so per-pane agent status survives Windows' implicit process-title updates and refreshes custom tab bars; the variable is cleared when OMP exits to prevent stale status indicators.
+- The streaming output sink no longer mangles escape sequences that a pipe or PTY read splits in half: sanitizing a chunk ending in `…\x1b[38;2;22` dropped the ESC and left the CSI body behind as literal text in both the transcript and the model's context. A trailing partial sequence is now held back and prepended to the next chunk, mirroring the existing carriage-return carry.
+- The per-line column cap no longer cuts inside an escape sequence (which produced the same literal-CSI residue) and charges only visible bytes, so a colored line keeps as much real text as the same plain line and closes its style before the ellipsis.
+- Interactive PTY commands (`pty: true`) now export `OMP_AGENT_SHELL=1`. That shell is a *login* shell, so rc files detecting an agent run via `OMPCODE` plus a `-c` invocation saw neither marker and loaded the system/interactive profile instead of their agent configuration.
 
 ## [18.1.8] - 2026-09-03
 
@@ -1756,16 +1767,6 @@
 - Fixed omp worktree clear prematurely deleting active task-isolation sandboxes owned by running subagents.
 - Fixed /vibe mode preventing the director from completing parent tasks after verifying worker results by keeping the built-in todo tool active.
 - Fixed numeric GitHub issue and pull request autocomplete being suppressed inside skill slash-command arguments.
-### Added
-
-- Added the `bash.userShell` setting (default `false`): when enabled, model-facing bash tool commands are routed through the configured user shell — the same `useUserShell` wrap that user `!` bang commands use — so zsh/fish rc files, aliases, and functions apply. The shell is resolved from `settings.getShellConfig()` honoring `shellPath`; bash shells keep the snapshot mechanism and cmd.exe is never wrapped.
-- Added the `bash.color` setting (default `false`): shell commands run with a real `TERM`/`COLORTERM` and no `NO_COLOR` (plus `CLICOLOR_FORCE`/`FORCE_COLOR`) instead of the colorless non-interactive defaults, the output sink keeps the SGR subset the transcript is allowed to replay instead of stripping every escape, and bash output renders each line's own colors over the theme's `toolOutput`/`muted` base rather than being repainted in one flat color. Applies to both model-issued bash calls and user `!` commands. Colored output costs escape-sequence tokens in the model's view of the result, and tools that only honor an explicit `--color=always` flag (eza, GNU `ls`, ripgrep) still need it from the shell's rc files — no environment variable reaches them.
-
-### Fixed
-
-- Published terminal-title state as a pane-local `OMP_TITLE` WezTerm user variable, so per-pane agent status survives Windows' implicit process-title updates and refreshes custom tab bars; the variable is cleared when OMP exits to prevent stale status indicators.
-- The streaming output sink no longer mangles escape sequences that a pipe or PTY read splits in half: sanitizing a chunk ending in `…\x1b[38;2;22` dropped the ESC and left the CSI body behind as literal text in both the transcript and the model's context. A trailing partial sequence is now held back and prepended to the next chunk, mirroring the existing carriage-return carry.
-- The per-line column cap no longer cuts inside an escape sequence (which produced the same literal-CSI residue) and charges only visible bytes, so a colored line keeps as much real text as the same plain line and closes its style before the ellipsis.
 
 ## [17.1.7] - 2026-07-27
 

@@ -577,8 +577,15 @@ export function formatSessionTerminalTitle(sessionName: string | undefined, cwd?
 	return label ? `${DEFAULT_TERMINAL_TITLE}: ${label}` : DEFAULT_TERMINAL_TITLE;
 }
 
+function publishWezTermTitle(title: string | undefined): void {
+	if (!process.env.WEZTERM_PANE || !process.stdout.isTTY || isTerminalHeadless()) return;
+	const encoded = title ? Buffer.from(title).toString("base64") : "";
+	writeTitleSequence(`\x1b]1337;SetUserVar=OMP_TITLE=${encoded}\x07`);
+}
+
 /**
- * Set the terminal title through the native Win32 API or OSC 0.
+ * Set the terminal title through the native Win32 API or OSC 0, and publish
+ * the same value as a pane-local WezTerm user variable when available.
  *
  * Repeating the same sanitized title is a no-op on every platform.
  */
@@ -632,6 +639,7 @@ function writeTerminalTitle(title: string, recomposeStaticOnFailure = false): vo
 						true,
 					);
 				if (latched === lastTerminalTitle) return;
+				publishWezTermTitle(latched);
 				writeTitleSequence(`\x1b]0;${latched}\x07`);
 				lastTerminalTitle = latched;
 				return;
@@ -639,6 +647,7 @@ function writeTerminalTitle(title: string, recomposeStaticOnFailure = false): vo
 		}
 		writeTitleSequence(`\x1b]0;${next}\x07`);
 	}
+	publishWezTermTitle(next);
 	lastTerminalTitle = next;
 }
 
@@ -988,6 +997,7 @@ export function disposeTerminalTitleState(): void {
 	// longer knows what is on screen: the stale dedupe cache (`lastTerminalTitle`,
 	// cleared below) must not swallow the first write after the latch releases.
 	stopTerminalTitleSpinner();
+	publishWezTermTitle(undefined);
 	disposeWindowsConsoleTitleApi();
 	lastTerminalTitle = undefined;
 }

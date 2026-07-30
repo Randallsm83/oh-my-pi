@@ -10,6 +10,7 @@ import {
 	formatToolWorkingDirectory,
 	previewWindowRows,
 	replaceTabs,
+	styleOutputLine,
 } from "../render/render-utils";
 import {
 	formatStyledTruncationWarning,
@@ -542,7 +543,7 @@ export function createShellRenderer<TArgs>(config: ShellRendererConfig<TArgs>) {
 							edge: "tail",
 							visual: true,
 							width: contentWidth,
-							styleLine: line => uiTheme.fg("toolOutput", replaceTabs(line)),
+							styleLine: line => styleOutputLine(replaceTabs(line), uiTheme),
 							uncapSixel: true,
 						},
 						uiTheme,

@@ -44,6 +44,7 @@ import {
 	formatStatusIcon,
 	replaceTabs,
 	resolveImageOptions,
+	styleOutputBlock,
 } from "../render/render-utils";
 import type { XdevMountedState } from "../tools/xdev";
 import { isFramedBlockComponent, markFramedBlockComponent, renderStatusLine, WidthAwareText } from "../render/index";
@@ -1433,7 +1434,7 @@ export class ToolExecutionComponent extends Container {
 							new SafeToolRendererComponent(this.#toolName, "result", resultComponent, () => {
 								const output = this.#getTextOutput();
 								if (!output) return undefined;
-								return new Text(theme.fg("toolOutput", replaceTabs(output)), 0, 0);
+								return new Text(styleOutputBlock(replaceTabs(output), theme), 0, 0);
 							}),
 						);
 					}
@@ -1442,14 +1443,14 @@ export class ToolExecutionComponent extends Container {
 					// Fall back to showing raw output on error
 					const output = this.#getTextOutput();
 					if (output) {
-						this.#contentBox.addChild(new Text(theme.fg("toolOutput", replaceTabs(output)), 0, 0));
+						this.#contentBox.addChild(new Text(styleOutputBlock(replaceTabs(output), theme), 0, 0));
 					}
 				}
 			} else if (this.#result) {
 				// Has result but no custom renderResult
 				const output = this.#getTextOutput();
 				if (output) {
-					this.#contentBox.addChild(new Text(theme.fg("toolOutput", replaceTabs(output)), 0, 0));
+					this.#contentBox.addChild(new Text(styleOutputBlock(replaceTabs(output), theme), 0, 0));
 				}
 			}
 			// Custom tools that draw their own frame (task) render flush; plain
@@ -1581,7 +1582,7 @@ export class ToolExecutionComponent extends Container {
 								new SafeToolRendererComponent(this.#toolName, "result", resultComponent, () => {
 									const output = this.#getTextOutput();
 									if (!output) return undefined;
-									return new Text(theme.fg("toolOutput", replaceTabs(output)), 0, 0);
+									return new Text(styleOutputBlock(replaceTabs(output), theme), 0, 0);
 								}),
 							);
 						}
@@ -1590,7 +1591,7 @@ export class ToolExecutionComponent extends Container {
 						// Fall back to showing raw output on error
 						const output = this.#getTextOutput();
 						if (output) {
-							this.#contentBox.addChild(new Text(theme.fg("toolOutput", replaceTabs(output)), 0, 0));
+							this.#contentBox.addChild(new Text(styleOutputBlock(replaceTabs(output), theme), 0, 0));
 						}
 					}
 				}

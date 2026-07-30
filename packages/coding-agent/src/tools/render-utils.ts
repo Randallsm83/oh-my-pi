@@ -15,9 +15,10 @@ import { pluralize } from "@oh-my-pi/pi-utils";
 import { formatKeyHints, type KeyId } from "../config/keybindings";
 import { isSettingsInitialized, settings } from "../config/settings";
 import { getDefault } from "../config/settings-schema";
-import type { Theme } from "../modes/theme/theme";
+import type { Theme, ThemeColor } from "../modes/theme/theme";
 import { Hasher } from "../tui/utils";
 import { formatDimensionNote, type ResizedImage } from "../utils/image-resize";
+import { styleTerminalRow } from "./terminal-output";
 
 export { Ellipsis } from "@oh-my-pi/pi-natives";
 export { replaceTabs, truncateToWidth, wrapTextWithAnsi } from "@oh-my-pi/pi-tui";
@@ -955,4 +956,29 @@ export function getLspBatchRequest(toolCall: ToolCallContext | undefined): LspBa
 	}
 	const hasLaterWrites = toolCall.toolCalls.slice(toolCall.index + 1).some(call => LSP_BATCH_TOOLS.has(call.name));
 	return { id: toolCall.batchId, flush: !hasLaterWrites };
+}
+
+// =============================================================================
+// Colored command output
+// =============================================================================
+
+/**
+ * Styles one line of tool output. A line carrying SGR — only possible when
+ * `bash.color` let the command emit color — keeps its own styling, replayed
+ * over the theme's base foreground so a mid-line reset does not drop the rest
+ * of the line to the terminal default. Everything else takes the flat theme
+ * color, byte-identical to the previous `theme.fg(...)` call.
+ */
+export function styleOutputLine(line: string, theme: Theme, color: ThemeColor = "toolOutput"): string {
+	return line.includes("\x1b") ? styleTerminalRow(line, theme.getFgAnsi(color)) : theme.fg(color, line);
+}
+
+/** {@link styleOutputLine} applied to every line of a multi-line block. */
+export function styleOutputBlock(output: string, theme: Theme, color: ThemeColor = "toolOutput"): string {
+	if (!output.includes("\x1b")) return theme.fg(color, output);
+	const base = theme.getFgAnsi(color);
+	return output
+		.split("\n")
+		.map(line => styleTerminalRow(line, base))
+		.join("\n");
 }

@@ -13,9 +13,10 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@oh-my-pi/pi-tui";
-import { sanitizeText } from "@oh-my-pi/pi-utils";
 import { theme } from "../../modes/theme/theme";
 import type { TruncationMeta } from "../../tools/output-meta";
+import { styleOutputLine } from "../../tools/render-utils";
+import { sanitizeTextKeepingSafeSgr } from "../../tools/terminal-output";
 import { getSixelLineMask, isSixelPassthroughEnabled, sanitizeWithOptionalSixelPassthrough } from "../../utils/sixel";
 import {
 	buildExecutionFrame,
@@ -169,12 +170,12 @@ export class BashExecutionComponent extends Container {
 		if (availableLines.length > 0) {
 			if (showingAllLines) {
 				const displayText = availableLines
-					.map((line, index) => (sixelLineMask?.[index] ? line : theme.fg("muted", line)))
+					.map((line, index) => (sixelLineMask?.[index] ? line : styleOutputLine(line, theme, "muted")))
 					.join("\n");
 				this.#contentContainer.addChild(new Text(`\n${displayText}`, 1, 0));
 			} else {
 				// Use shared visual truncation utility, recomputed per render width
-				const styledOutput = previewLogicalLines.map(line => theme.fg("muted", line)).join("\n");
+				const styledOutput = previewLogicalLines.map(line => styleOutputLine(line, theme, "muted")).join("\n");
 				this.#contentContainer.addChild(createCollapsedPreview(`\n${styledOutput}`, PREVIEW_LINES));
 			}
 		}
@@ -213,7 +214,7 @@ export class BashExecutionComponent extends Container {
 	}
 
 	#setOutput(output: string): void {
-		const clean = sanitizeWithOptionalSixelPassthrough(output, sanitizeText);
+		const clean = sanitizeWithOptionalSixelPassthrough(output, sanitizeTextKeepingSafeSgr);
 		this.#outputLines = clean ? this.#clampLinesPreservingSixel(clean.split("\n")) : [];
 	}
 

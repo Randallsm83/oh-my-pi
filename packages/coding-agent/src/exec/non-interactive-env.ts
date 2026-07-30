@@ -52,6 +52,36 @@ export const NON_INTERACTIVE_ENV: Readonly<Record<string, string>> = {
 	CLOUDSDK_CORE_DISABLE_PROMPTS: "1",
 };
 
+/**
+ * Overrides that ask color-aware tools to emit SGR even though stdout is a
+ * pipe. Covers the two conventions with broad support: `CLICOLOR_FORCE` (Rust
+ * `clicolors`, delta, BSD-style tools) and `FORCE_COLOR` (Node/chalk, cargo).
+ * Tools that only honor an explicit `--color=always` flag — eza, GNU ls,
+ * ripgrep — are unreachable from the environment; forcing those is the user
+ * shell's job, not ours.
+ */
+const COLOR_ENV: Readonly<Record<string, string>> = {
+	TERM: "xterm-256color",
+	COLORTERM: "truecolor",
+	CLICOLOR: "1",
+	CLICOLOR_FORCE: "1",
+	FORCE_COLOR: "3",
+};
+
+export interface NonInteractiveEnvOptions {
+	/** Emit color instead of forcing `TERM=dumb` / `NO_COLOR=1`. */
+	color?: boolean;
+}
+
+function colorEnabledBase(): Record<string, string> {
+	const env: Record<string, string> = { ...NON_INTERACTIVE_ENV, ...COLOR_ENV };
+	// Must be ABSENT, not empty: the Rust ecosystem checks
+	// `env::var_os("NO_COLOR").is_some()`, so `NO_COLOR=""` still reads as
+	// "colors disabled" for eza/delta/ripgrep.
+	delete env.NO_COLOR;
+	return env;
+}
+
 const WINDOWS_UTF8_ENV_DEFAULT_GROUPS: ReadonlyArray<ReadonlyArray<readonly [key: string, value: string]>> = [
 	[
 		["PYTHONIOENCODING", "utf-8"],
@@ -112,12 +142,13 @@ export function buildNonInteractiveEnv(
 	overrides?: Record<string, string>,
 	baseEnv: Record<string, string | undefined> = Bun.env,
 	platform: NodeJS.Platform = process.platform,
+	options?: NonInteractiveEnvOptions,
 ): Record<string, string> {
 	// `PI_BASH_NO_CI` (and its legacy alias) opts out of the automatic `CI=true`
 	// injection. Mirrors the session-env gate in `procmgr.ts` so the opt-out
 	// reaches the per-command env, which otherwise overrides the session value.
-	const base =
-		baseEnv.PI_BASH_NO_CI || baseEnv.CLAUDE_BASH_NO_CI ? withoutCI(NON_INTERACTIVE_ENV) : NON_INTERACTIVE_ENV;
+	const colorBase = options?.color === true ? colorEnabledBase() : NON_INTERACTIVE_ENV;
+	const base = baseEnv.PI_BASH_NO_CI || baseEnv.CLAUDE_BASH_NO_CI ? withoutCI(colorBase) : colorBase;
 	if (platform !== "win32") {
 		return overrides ? { ...base, ...overrides } : base;
 	}

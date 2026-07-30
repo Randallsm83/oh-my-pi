@@ -939,6 +939,7 @@
 
 ### Fixed
 
+- Published terminal-title state as a pane-local `OMP_TITLE` WezTerm user variable, so per-pane agent status survives Windows' implicit process-title updates and refreshes custom tab bars; the variable is cleared when OMP exits to prevent stale status indicators.
 - The streaming output sink no longer mangles escape sequences that a pipe or PTY read splits in half: sanitizing a chunk ending in `…\x1b[38;2;22` dropped the ESC and left the CSI body behind as literal text in both the transcript and the model's context. A trailing partial sequence is now held back and prepended to the next chunk, mirroring the existing carriage-return carry.
 - The per-line column cap no longer cuts inside an escape sequence (which produced the same literal-CSI residue) and charges only visible bytes, so a colored line keeps as much real text as the same plain line and closes its style before the ellipsis.
 

@@ -34,6 +34,10 @@ function terminalEnv(exports: Record<string, string>): Record<string, string> {
 	// procmgr's spawn env marks the session's stdin as no terminal.
 	if (env.GPG_TTY === "not a tty") delete env.GPG_TTY;
 	env.TERM ??= "xterm-256color";
+	// The agent marker has to be explicit here: rc files that gate on OMPCODE
+	// plus a `-c` invocation see neither in a shell started on this terminal,
+	// and without it the system profile loads instead of the user's agent config.
+	env.OMP_AGENT_SHELL ??= "1";
 	return env;
 }
 

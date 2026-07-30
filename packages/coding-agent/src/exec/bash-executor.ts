@@ -27,6 +27,7 @@ import { loadDirenvEnv } from "./direnv";
 import { buildNonInteractiveEnv } from "./non-interactive-env";
 
 import {
+	cfgBashColor,
 	cfgBashDirenv,
 	cfgBashDirenvLoadTimeoutMs,
 	cfgShellMinimizer,
@@ -562,14 +563,26 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 			commandPrefix: prefix,
 		}),
 	]);
-	const commandEnv = buildNonInteractiveEnv(preflight.env);
+	const colorOutput = cfgBashColor.get(settings);
+	const commandEnv = buildNonInteractiveEnv(preflight.env, Bun.env, process.platform, { color: colorOutput });
 	const runCdInPersistentShell = options?.useUserShell === true && !prefix && isPersistentShellCdCommand(command);
+	// The per-command env is applied as OVERRIDES on top of the parent process
+	// env, so it can add a variable but never remove one omp itself inherited: a
+	// NO_COLOR in omp's own environment would survive and silently defeat
+	// `bash.color`. Drop it in-shell — only when it is actually present, so the
+	// common case prepends nothing. A bare `cd` in the persistent shell is left
+	// alone; it has no output to colorize.
+	const dropInheritedNoColor =
+		colorOutput === true && Bun.env.NO_COLOR !== undefined && !isCmdShell(shell) && !runCdInPersistentShell;
+	const colorCommand = dropInheritedNoColor
+		? `${shellBasename(shell).includes("fish") ? "set -e NO_COLOR" : "unset NO_COLOR"}; ${preflight.command}`
+		: preflight.command;
 	// Never wrap in cmd.exe: it is only the Windows no-bash fallback for spawn
 	// paths, and the embedded brush shell runs the POSIX line better directly.
 	const finalCommand =
 		options?.useUserShell === true && !bashShell && !isCmdShell(shell) && !runCdInPersistentShell
-			? buildUserShellCommand(shell, args, preflight.command)
-			: preflight.command;
+			? buildUserShellCommand(shell, args, colorCommand)
+			: colorCommand;
 
 	// Create output sink for truncation and artifact handling
 	const graphics = new TerminalGraphicsDecoder();
@@ -588,6 +601,7 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 		headBytes: resolveOutputSinkHeadBytes(settings),
 		artifactMaxBytes: resolveOutputSinkArtifactMaxBytes(settings),
 		maxColumns: resolveOutputMaxColumns(settings),
+		keepSgr: colorOutput,
 		chunkThrottleMs: onChunk || onPreview ? (options?.chunkThrottleMs ?? 50) : 0,
 	});
 

@@ -468,8 +468,15 @@ export function formatSessionTerminalTitle(sessionName: string | undefined, cwd?
 	return label ? `${DEFAULT_TERMINAL_TITLE}: ${label}` : DEFAULT_TERMINAL_TITLE;
 }
 
+function publishWezTermTitle(title: string | undefined): void {
+	if (!process.env.WEZTERM_PANE || !process.stdout.isTTY || isTerminalHeadless()) return;
+	const encoded = title ? Buffer.from(title).toString("base64") : "";
+	writeTitleSequence(`\x1b]1337;SetUserVar=OMP_TITLE=${encoded}\x07`);
+}
+
 /**
- * Set the terminal title through the native Win32 API or OSC 0.
+ * Set the terminal title through the native Win32 API or OSC 0, and publish
+ * the same value as a pane-local WezTerm user variable when available.
  *
  * Repeating the same sanitized title is a no-op on every platform.
  */
@@ -477,6 +484,7 @@ export function setTerminalTitle(title: string): void {
 	if (!process.stdout.isTTY || isTerminalHeadless()) return;
 	const next = sanitizeTerminalTitlePart(title) ?? DEFAULT_TERMINAL_TITLE;
 	if (next === lastTerminalTitle) return;
+	publishWezTermTitle(next);
 	if (!setWindowsConsoleTitle(next)) writeTitleSequence(`\x1b]0;${next}\x07`);
 	lastTerminalTitle = next;
 }
@@ -548,14 +556,17 @@ export function buildTerminalTitleWithState(
 	platform: NodeJS.Platform = process.platform,
 ): string {
 	if (!enabled) return label ? `${DEFAULT_TERMINAL_TITLE}: ${label}` : DEFAULT_TERMINAL_TITLE;
-	const separator =
-		state === "working"
-			? platform === "win32"
+	let separator: string;
+	if (state === "working") {
+		separator =
+			platform === "win32"
 				? WINDOWS_TITLE_WORKING_SEPARATOR
-				: TITLE_SPINNER_FRAMES[frame % TITLE_SPINNER_FRAMES.length]
-			: state === "attention"
-				? TITLE_ATTENTION_SEPARATOR
-				: TITLE_IDLE_SEPARATOR;
+				: TITLE_SPINNER_FRAMES[frame % TITLE_SPINNER_FRAMES.length];
+	} else if (state === "attention") {
+		separator = TITLE_ATTENTION_SEPARATOR;
+	} else {
+		separator = TITLE_IDLE_SEPARATOR;
+	}
 	return label ? `${DEFAULT_TERMINAL_TITLE} ${separator} ${label}` : `${DEFAULT_TERMINAL_TITLE} ${separator}`;
 }
 
@@ -613,6 +624,7 @@ export function setTerminalTitleStateEnabled(enabled: boolean): void {
 /** Release terminal-title runtime resources. */
 export function disposeTerminalTitleState(): void {
 	stopTerminalTitleSpinner();
+	publishWezTermTitle(undefined);
 	disposeWindowsConsoleTitleApi();
 	lastTerminalTitle = undefined;
 }

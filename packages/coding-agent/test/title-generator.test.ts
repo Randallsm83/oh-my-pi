@@ -864,6 +864,7 @@ describe("terminal title runtime", () => {
 	let prevHeadless = false;
 	let ttyDescriptor: PropertyDescriptor | undefined;
 	let windowsTitleMock: WindowsConsoleTitleMock | undefined;
+	let weztermPaneEnv: string | undefined;
 
 	// Titles emitted (newest last) since the last reset of `writes` and the native
 	// mock; this win32 host drives the native `SetConsoleTitleW` sink, so OSC-only
@@ -890,6 +891,8 @@ describe("terminal title runtime", () => {
 
 		windowsTitleMock = mockWindowsConsoleTitle();
 		windowsTitleMock.succeeds = true;
+		weztermPaneEnv = process.env.WEZTERM_PANE;
+		delete process.env.WEZTERM_PANE;
 		writes = [];
 		stdoutSpy = spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
 			writes.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk as Uint8Array));
@@ -919,6 +922,8 @@ describe("terminal title runtime", () => {
 		if (ttyDescriptor) Object.defineProperty(process.stdout, "isTTY", ttyDescriptor);
 		else Reflect.deleteProperty(process.stdout, "isTTY");
 		setTerminalHeadless(prevHeadless);
+		if (weztermPaneEnv === undefined) delete process.env.WEZTERM_PANE;
+		else process.env.WEZTERM_PANE = weztermPaneEnv;
 		vi.useRealTimers();
 	});
 
@@ -1032,6 +1037,30 @@ describe("terminal title runtime", () => {
 		} finally {
 			if (originalWslDistro === undefined) delete process.env.WSL_DISTRO_NAME;
 			else process.env.WSL_DISTRO_NAME = originalWslDistro;
+			Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+		}
+	});
+
+	it("publishes every run-state transition to the pane-local WezTerm variable", () => {
+		const originalPlatform = process.platform;
+		try {
+			Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+			process.env.WEZTERM_PANE = "state-test";
+			setSessionTerminalTitle("stateful-project");
+			writes.length = 0;
+			if (!windowsTitleMock) throw new Error("Windows console title mock not initialized");
+			windowsTitleMock.succeeds = false;
+
+			setTerminalTitleState("working");
+			setTerminalTitleState("attention");
+			setTerminalTitleState("idle");
+
+			const prefix = "\x1b]1337;SetUserVar=OMP_TITLE=";
+			const publishedTitles = writes
+				.filter(frame => frame.startsWith(prefix))
+				.map(frame => Buffer.from(frame.slice(prefix.length, -1), "base64").toString());
+			expect(publishedTitles).toEqual(["π : stateful-project", "π ! stateful-project", "π > stateful-project"]);
+		} finally {
 			Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
 		}
 	});
@@ -1156,5 +1185,32 @@ describe("terminal title runtime", () => {
 		expect(last).toBeDefined();
 		expect(last).toContain("my-session");
 		expectWorkingSeparator(last, "my-session");
+	});
+
+	it("publishes the title as a pane-local WezTerm user variable", () => {
+		const originalPlatform = process.platform;
+		const native = windowsTitleMock;
+		if (!native) throw new Error("Windows console title mock not initialized");
+		native.succeeds = true;
+		process.env.WEZTERM_PANE = "13";
+		try {
+			Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+			setTerminalTitle("pane Ω");
+
+			expect(native.titles).toEqual(["pane Ω"]);
+			expect(writes).toEqual([`\x1b]1337;SetUserVar=OMP_TITLE=${Buffer.from("pane Ω").toString("base64")}\x07`]);
+		} finally {
+			Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+		}
+	});
+
+	it("clears the pane-local WezTerm title during teardown", () => {
+		process.env.WEZTERM_PANE = "13";
+		setTerminalTitle("finished session");
+		writes.length = 0;
+
+		disposeTerminalTitleState();
+
+		expect(writes).toEqual(["\x1b]1337;SetUserVar=OMP_TITLE=\x07"]);
 	});
 });

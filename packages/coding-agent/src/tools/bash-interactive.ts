@@ -402,9 +402,14 @@ export async function runInteractiveBashPty(
 							timeoutMs: options.timeoutMs,
 							// Interactive PTY: inherit the user's environment (the Rust side
 							// applies these as overrides), with a real TERM so editors,
-							// pagers, and TUIs behave like a normal terminal.
+							// pagers, and TUIs behave like a normal terminal. Unlike the
+							// non-interactive path this is a LOGIN shell, so the agent marker
+							// has to be explicit: rc files that gate on OMPCODE + a `-c`
+							// invocation see neither here, and without the marker the system
+							// profile loads instead of the user's agent config.
 							env: {
 								TERM: "xterm-256color",
+								OMP_AGENT_SHELL: "1",
 								...options.env,
 							},
 							signal: options.signal,

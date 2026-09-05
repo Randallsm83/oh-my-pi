@@ -11,6 +11,7 @@ import {
 	imageFallback,
 	ImageProtocol,
 	type Loader,
+	matchesKey,
 	TERMINAL,
 	Text,
 	type TUI,
@@ -19,7 +20,7 @@ import {
 } from "@oh-my-pi/pi-tui";
 import type { Terminal as XtermTerminalType } from "@oh-my-pi/pi-utils/vterm";
 import { theme } from "../../modes/theme/theme";
-import { loadXtermTerminal } from "../../tools/bash-interactive";
+import { loadXtermTerminal, normalizeInputForPty } from "../../tools/bash-interactive";
 import type { TruncationMeta } from "../../tools/output-meta";
 import { resolveImageOptions, styleOutputLine } from "../../tools/render-utils";
 import { readTerminalRows, sanitizeTextKeepingSafeSgr, styleTerminalRow } from "../../tools/terminal-output";
@@ -83,6 +84,9 @@ export class BashExecutionComponent extends Container {
 	#images: readonly ImageContent[] = [];
 	#showImages = true;
 	readonly #instanceId = nextBashExecutionId++;
+	// Live PTY input plumbing for user `!` commands (see `setPtyInput`).
+	#ptyInput?: (data: string) => void;
+	#onCancel?: () => void;
 
 	constructor(
 		private readonly command: string,
@@ -115,6 +119,38 @@ export class BashExecutionComponent extends Container {
 
 	getTranscriptBlockVersion(): number {
 		return this.#blockVersion;
+	}
+
+	/**
+	 * Wire the running PTY so keystrokes reach the command. Only the user `!`
+	 * surface calls this, and only on the user-shell PTY path; a component
+	 * without it stays display-only, which is the correct behavior for the
+	 * non-PTY fallback where there is no session to write to.
+	 */
+	setPtyInput(write: (data: string) => void, onCancel: () => void): void {
+		this.#ptyInput = write;
+		this.#onCancel = onCancel;
+		// Announce it. Forwarding is otherwise invisible - indistinguishable
+		// from a build that lacks it - so the running label is the only place
+		// the capability can be discovered without guessing.
+		this.#loader.setMessage("Running… (keys go to the command · esc to cancel)");
+	}
+
+	/**
+	 * Esc cancels the run: while this component holds focus the input
+	 * controller's own Esc handler is unreachable, so a command that never
+	 * exits would otherwise have no way out. Every other key is normalized to
+	 * PTY bytes and forwarded. Keys are dropped once the command completes, so
+	 * a keystroke racing the exit cannot be written to a dead session.
+	 */
+	handleInput(data: string): void {
+		if (this.#status !== "running") return;
+		if (matchesKey(data, "escape") || matchesKey(data, "esc")) {
+			this.#onCancel?.();
+			return;
+		}
+		const normalized = normalizeInputForPty(data, this.#ptyTerminal?.modes.applicationCursorKeysMode ?? false);
+		if (normalized) this.#ptyInput?.(normalized);
 	}
 
 	/**
@@ -215,6 +251,13 @@ export class BashExecutionComponent extends Container {
 		}
 		this.#chunkGate = true;
 		this.#refreshPtyLines(false);
+		// Marking the display dirty is not sufficient: `render()` is what
+		// consumes that flag, so a streaming frame that never asks for a repaint
+		// only reaches the screen when something unrelated triggers one - in
+		// practice the loader's spinner tick. That made an interactive `!`
+		// command's output lag its keystrokes by seconds, which is
+		// indistinguishable from input not being forwarded at all.
+		this.#ui.requestRender();
 		setTimeout(() => {
 			this.#chunkGate = false;
 			if (this.#ptyRefreshQueued) {

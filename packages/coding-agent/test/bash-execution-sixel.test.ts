@@ -1,8 +1,9 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "bun:test";
 import { BashExecutionComponent } from "@oh-my-pi/pi-coding-agent/modes/components/bash-execution";
+import { ToolExecutionComponent } from "@oh-my-pi/pi-coding-agent/modes/components/tool-execution";
 import { getThemeByName, setThemeInstance, type Theme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { sanitizeWithOptionalSixelPassthrough } from "@oh-my-pi/pi-coding-agent/utils/sixel";
-import type { TUI } from "@oh-my-pi/pi-tui";
+import { Text, type TUI } from "@oh-my-pi/pi-tui";
 import { sanitizeText } from "@oh-my-pi/pi-utils";
 
 const SIXEL = "\x1bPqabc\x1b\\";
@@ -38,6 +39,20 @@ describe("BashExecutionComponent SIXEL sanitization", () => {
 		component.setComplete(0, false);
 
 		expect(component.getOutput()).toContain(SIXEL);
+	});
+
+	it("preserves SIXEL output in a custom tool raw-result fallback", () => {
+		Bun.env.PI_FORCE_IMAGE_PROTOCOL = "sixel";
+		Bun.env.PI_ALLOW_SIXEL_PASSTHROUGH = "1";
+		const tool = {
+			label: "sixel-test",
+			renderCall: () => new Text("sixel-test", 0, 0),
+		};
+		const component = new ToolExecutionComponent("sixel-test", {}, {}, tool as never, ui);
+
+		component.updateResult({ content: [{ type: "text", text: `before\n${SIXEL}\nafter` }] });
+
+		expect(component.render(120).join("\n")).toContain(SIXEL);
 	});
 
 	it("does not truncate long SIXEL payload lines", () => {

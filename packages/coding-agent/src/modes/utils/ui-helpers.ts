@@ -176,6 +176,7 @@ export class UiHelpers {
 					images: message.images,
 					showImages: settings.get("terminal.showImages"),
 				});
+				component.setExpanded(this.ctx.toolOutputExpanded);
 				this.ctx.chatContainer.addChild(component);
 				break;
 			}
@@ -187,6 +188,7 @@ export class UiHelpers {
 				component.setComplete(message.exitCode, message.cancelled, {
 					truncation: message.meta?.truncation,
 				});
+				component.setExpanded(this.ctx.toolOutputExpanded);
 				this.ctx.chatContainer.addChild(component);
 				break;
 			}

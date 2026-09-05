@@ -1901,6 +1901,7 @@ export class CommandController {
 		shouldPersistCwd: boolean,
 	): Promise<boolean> {
 		const component = new BashExecutionComponent(command, this.ctx.ui, excludeFromContext);
+		component.setExpanded(this.ctx.toolOutputExpanded);
 		this.ctx.bashComponent = component;
 		// Provisional until the session records the run.
 		const block = new PresentedBlock(
@@ -1978,9 +1979,7 @@ export class CommandController {
 				);
 			}
 		} catch (error) {
-			if (this.ctx.bashComponent) {
-				this.ctx.bashComponent.setComplete(undefined, false);
-			}
+			component.setComplete(undefined, false);
 			this.ctx.showError(`Bash command failed: ${error instanceof Error ? error.message : "Unknown error"}`);
 		} finally {
 			finished = true;

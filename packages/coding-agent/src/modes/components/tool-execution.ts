@@ -21,7 +21,7 @@ import { BASH_DEFAULT_PREVIEW_LINES } from "../../tools/bash";
 import { formatDefaultToolExecution } from "../../tools/default-renderer";
 import { EVAL_DEFAULT_PREVIEW_LINES } from "../../tools/eval";
 import { isWaitingPollDetails } from "../../tools/hub";
-import { formatStatusIcon, replaceTabs, resolveImageOptions, styleOutputBlock } from "../../tools/render-utils";
+import { formatStatusIcon, replaceTabs, resolveImageOptions, styleOutputLine } from "../../tools/render-utils";
 import {
 	type FirstResultViewportRepaint,
 	type ToolActivitySummary,
@@ -33,7 +33,7 @@ import type { XdevState } from "../../tools/xdev";
 import type { EditMode } from "../../utils/edit-mode";
 import { isFramedBlockComponent, markFramedBlockComponent, renderStatusLine, WidthAwareText } from "../../tui";
 import { convertImageToPng } from "../../utils/image-loading";
-import { sanitizeWithOptionalSixelPassthrough } from "../../utils/sixel";
+import { getSixelLineMask, sanitizeWithOptionalSixelPassthrough } from "../../utils/sixel";
 import { renderDiff } from "./diff";
 import { type AnimationFrame, trimBlankEdges } from "./transcript-container";
 
@@ -1014,26 +1014,27 @@ export class ToolExecutionComponent extends Container {
 					);
 					if (resultComponent) {
 						this.#contentBox.addChild(
-							new SafeToolRendererComponent(this.#toolName, "result", resultComponent, () => {
-								const output = this.#getTextOutput();
-								if (!output) return undefined;
-								return new Text(styleOutputBlock(replaceTabs(output), theme), 0, 0);
-							}),
+							new SafeToolRendererComponent(
+								this.#toolName,
+								"result",
+								resultComponent,
+								() => this.#createTextOutputComponent(),
+							),
 						);
 					}
 				} catch (err) {
 					logger.warn("Tool renderer failed", { tool: this.#toolName, error: String(err) });
 					// Fall back to showing raw output on error
-					const output = this.#getTextOutput();
-					if (output) {
-						this.#contentBox.addChild(new Text(styleOutputBlock(replaceTabs(output), theme), 0, 0));
+					const outputComponent = this.#createTextOutputComponent();
+					if (outputComponent) {
+						this.#contentBox.addChild(outputComponent);
 					}
 				}
 			} else if (this.#result) {
 				// Has result but no custom renderResult
-				const output = this.#getTextOutput();
-				if (output) {
-					this.#contentBox.addChild(new Text(styleOutputBlock(replaceTabs(output), theme), 0, 0));
+				const outputComponent = this.#createTextOutputComponent();
+				if (outputComponent) {
+					this.#contentBox.addChild(outputComponent);
 				}
 			}
 			// Custom tools that draw their own frame (task) render flush; plain
@@ -1160,19 +1161,20 @@ export class ToolExecutionComponent extends Container {
 						);
 						if (resultComponent) {
 							this.#contentBox.addChild(
-								new SafeToolRendererComponent(this.#toolName, "result", resultComponent, () => {
-									const output = this.#getTextOutput();
-									if (!output) return undefined;
-									return new Text(styleOutputBlock(replaceTabs(output), theme), 0, 0);
-								}),
+								new SafeToolRendererComponent(
+									this.#toolName,
+									"result",
+									resultComponent,
+									() => this.#createTextOutputComponent(),
+								),
 							);
 						}
 					} catch (err) {
 						logger.warn("Tool renderer failed", { tool: this.#toolName, error: String(err) });
 						// Fall back to showing raw output on error
-						const output = this.#getTextOutput();
-						if (output) {
-							this.#contentBox.addChild(new Text(styleOutputBlock(replaceTabs(output), theme), 0, 0));
+						const outputComponent = this.#createTextOutputComponent();
+						if (outputComponent) {
+							this.#contentBox.addChild(outputComponent);
 						}
 					}
 				}
@@ -1310,6 +1312,14 @@ export class ToolExecutionComponent extends Container {
 		}
 
 		return context;
+	}
+
+	#createTextOutputComponent(): Text | undefined {
+		const output = this.#getTextOutput();
+		if (!output) return undefined;
+		const lines = replaceTabs(output).split("\n");
+		const sixelLineMask = getSixelLineMask(lines);
+		return new Text(lines.map((line, index) => (sixelLineMask[index] ? line : styleOutputLine(line, theme))).join("\n"), 0, 0);
 	}
 
 	#getTextOutput(): string {

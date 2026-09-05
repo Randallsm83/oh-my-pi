@@ -130,19 +130,15 @@ describe("BashTool user shell forwarding", () => {
 			outputBytes: 3,
 		});
 
-		try {
-			const enabledTool = new BashTool(makeSession({ "bash.userShell": true }));
-			await enabledTool.execute("call-user-shell-on", { command: "echo hi" });
-			expect(spy).toHaveBeenCalledTimes(1);
-			expect(spy.mock.calls[0]?.[1]?.useUserShell).toBe(true);
+		const enabledTool = new BashTool(makeSession({ "bash.userShell": true }));
+		await enabledTool.execute("call-user-shell-on", { command: "echo hi" });
+		expect(spy).toHaveBeenCalledTimes(1);
+		expect(spy.mock.calls[0]?.[1]?.useUserShell).toBe(true);
 
-			spy.mockClear();
-			const disabledTool = new BashTool(makeSession({ "bash.userShell": false }));
-			await disabledTool.execute("call-user-shell-off", { command: "echo hi" });
-			expect(spy).toHaveBeenCalledTimes(1);
-			expect(spy.mock.calls[0]?.[1]?.useUserShell).toBe(false);
-		} finally {
-			spy.mockRestore();
-		}
+		spy.mockClear();
+		const disabledTool = new BashTool(makeSession({ "bash.userShell": false }));
+		await disabledTool.execute("call-user-shell-off", { command: "echo hi" });
+		expect(spy).toHaveBeenCalledTimes(1);
+		expect(spy.mock.calls[0]?.[1]?.useUserShell).toBe(false);
 	});
 });

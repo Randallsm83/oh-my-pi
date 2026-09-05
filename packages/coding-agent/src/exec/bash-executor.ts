@@ -53,6 +53,14 @@ export interface BashPtyOptions {
 	rows: number;
 	/** Receives raw PTY bytes (ANSI intact) for virtual-terminal rendering. */
 	onChunk: (chunk: string) => void;
+	/**
+	 * Receives the live PTY handle as soon as the session exists, letting a
+	 * caller that owns a UI forward keystrokes into the running command.
+	 * Without it the `!` surface is display-only: a command that prompts (a
+	 * picker, a pager, `sudo`) paints its prompt and then blocks until its
+	 * deadline, because nothing can answer it.
+	 */
+	onSession?: (session: { write(data: string): void }) => void;
 }
 
 export interface BashResult {
@@ -413,6 +421,9 @@ async function executeUserShellPty(run: {
 	dump: (notice?: string) => Promise<OutputSummary & { images?: ImageContent[] }>;
 }): Promise<BashResult> {
 	const session = new PtySession();
+	// Handed over before the run starts, so the first prompt a command paints
+	// can already be answered.
+	run.pty.onSession?.(session);
 	const result = await session.startArgv(
 		{
 			application: run.shell,
@@ -457,6 +468,19 @@ async function executeUserShellPty(run: {
 		cancelled: false,
 		...(await run.dump()),
 	};
+}
+
+/**
+ * The deadline for a PTY run; `undefined` disables it.
+ *
+ * `interactive` means the caller took the session handle and is forwarding
+ * keystrokes, so a human is driving the run and is its own deadline. This lives
+ * in a named function because the interactive branch is reachable only through
+ * a UI-focused `!` command, which no test of `executeBash` itself can set up.
+ */
+export function resolvePtyTimeoutMs(requestedMs: number | undefined, interactive: boolean): number | undefined {
+	if (interactive || requestedMs === 0) return undefined;
+	return Math.max(1_000, requestedMs ?? 300_000);
 }
 
 export async function executeBash(command: string, options?: BashExecutorOptions): Promise<BashResult> {
@@ -563,6 +587,13 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 
 	if (usePty && ptyRequest) {
 		const requestedMs = options?.timeout;
+		// A caller that takes the session handle is forwarding keystrokes, so a
+		// human is driving this run and the person at the keyboard is its
+		// deadline. Inheriting an agent-tool default kills a wizard, pager, or
+		// `sudo` prompt mid-answer — the exact thing interactive input exists to
+		// allow. Esc cancels, so the run is never unkillable. Runs WITHOUT a
+		// session handle keep their deadline: nothing can answer or cancel those.
+		const interactive = ptyRequest.onSession !== undefined;
 		try {
 			return await executeUserShellPty({
 				shell,
@@ -571,7 +602,7 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 				cwd: commandCwd,
 				env: buildUserShellPtyEnv(shellEnv, commandEnv),
 				pty: ptyRequest,
-				timeoutMs: requestedMs === 0 ? undefined : Math.max(1_000, requestedMs ?? 300_000),
+				timeoutMs: resolvePtyTimeoutMs(requestedMs, interactive),
 				signal: options?.signal,
 				sink,
 				graphics,

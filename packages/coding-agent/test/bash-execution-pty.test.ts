@@ -50,4 +50,24 @@ describe("BashExecutionComponent PTY rendering", () => {
 		expect(text).toContain("100%");
 		expect(text).not.toContain("50%");
 	});
+
+	it("asks for a repaint when streaming PTY output arrives", async () => {
+		let renders = 0;
+		const countingUi = {
+			requestRender: () => {
+				renders++;
+			},
+			requestComponentRender: () => {},
+		} as unknown as TUI;
+		const component = new BashExecutionComponent("stream", countingUi, false);
+		component.appendPtyChunk("first frame\r\n");
+
+		// Deliberately asserted on the render *request*, not on rendered text: a
+		// component that only sets its dirty flag still shows the text the moment
+		// anyone else repaints, so polling render() output would pass with the bug
+		// present. Only the request proves a keystroke's frame reaches the screen
+		// on its own rather than waiting for an unrelated spinner tick.
+		await renderUntil(component, () => renders > 0);
+		expect(renders).toBeGreaterThan(0);
+	});
 });

@@ -9,6 +9,7 @@ import {
 	buildMinimizerOptions,
 	executeBash,
 	isPersistentShellCdCommand,
+	resolvePtyTimeoutMs,
 } from "@oh-my-pi/pi-coding-agent/exec/bash-executor";
 import * as direnvModule from "@oh-my-pi/pi-coding-agent/exec/direnv";
 import { DEFAULT_MAX_BYTES } from "@oh-my-pi/pi-coding-agent/session/streaming-output";
@@ -617,6 +618,72 @@ exit 64
 			// renderer callback for vterm replay.
 			expect(result.output).not.toContain("\u001b[31m");
 			expect(rawChunks.join("")).toContain("\u001b[31mred\u001b[0m");
+		} finally {
+			removeSyncWithRetries(shellDir);
+		}
+	});
+
+	it("hands `!` callers a PTY handle whose writes reach the running command", async () => {
+		if (process.platform === "win32" || Bun.env.PI_NO_PTY === "1") {
+			return;
+		}
+		const zshPath = ["/bin/zsh", "/usr/bin/zsh", "/usr/local/bin/zsh", "/opt/homebrew/bin/zsh"].find(candidate =>
+			fs.existsSync(candidate),
+		);
+		if (!zshPath) {
+			return;
+		}
+
+		const shellDir = fs.mkdtempSync(path.join(os.tmpdir(), "omp-zsh-pty-input-"));
+		Settings.instance.set("shellPath", zshPath);
+
+		vi.spyOn(Settings.prototype, "getShellConfig").mockReturnValue({
+			shell: zshPath,
+			args: ["-l", "-c"],
+			env: {
+				PATH: Bun.env.PATH ?? "",
+				HOME: shellDir,
+				SHELL_SESSIONS_DISABLE: "1",
+			},
+			prefix: undefined,
+		});
+
+		let handle: { write(data: string): void } | undefined;
+		let answered = false;
+		let seen = "";
+		try {
+			const result = await executeBash('printf \'ready>\'; read -r line; printf "got:[%s]" "$line"', {
+				cwd: tempDir,
+				timeout: 15000,
+				sessionKey: "zsh-pty-input",
+				useUserShell: true,
+				pty: {
+					cols: 80,
+					rows: 24,
+					onChunk: chunk => {
+						// The command's own prompt is the readiness signal, so the
+						// reply needs no wall-clock guess: `read` blocks, and an
+						// answer written before it runs would be lost. Accumulate
+						// first — the PTY can split the marker across chunk
+						// boundaries, and testing each chunk alone would miss it
+						// and leave the blocking `read` waiting for the deadline.
+						seen += chunk;
+						if (answered || !seen.includes("ready>")) return;
+						answered = true;
+						handle?.write("answered\r");
+					},
+					onSession: session => {
+						handle = session;
+					},
+				},
+			});
+
+			// The handle must already exist when the first chunk arrives, which is
+			// what makes the reply above possible at all.
+			expect(handle).toBeDefined();
+			expect(answered).toBe(true);
+			expect(result.exitCode).toBe(0);
+			expect(result.output).toContain("got:[answered]");
 		} finally {
 			removeSyncWithRetries(shellDir);
 		}
@@ -1529,5 +1596,32 @@ describe("applyDirenvPreflight direnv-load clamp", () => {
 
 		expect(spy).toHaveBeenCalledTimes(1);
 		expect(spy.mock.calls[0][1]?.timeoutMs).toBe(30_000);
+	});
+});
+
+describe("resolvePtyTimeoutMs", () => {
+	it("gives an interactive run no deadline", () => {
+		// The shipped bug: a `!` command inherited the agent bash tool's
+		// deadline, so a wizard the user was answering by hand was killed
+		// mid-session ("Command timed out after 300 seconds") even though every
+		// keystroke was reaching it.
+		expect(resolvePtyTimeoutMs(300_000, true)).toBeUndefined();
+		expect(resolvePtyTimeoutMs(undefined, true)).toBeUndefined();
+	});
+
+	it("keeps a deadline for a run nothing can answer", () => {
+		// Negative control. Without a session handle no key can be forwarded and
+		// Esc cannot cancel, so dropping the deadline there would make the run
+		// unkillable rather than interactive.
+		expect(resolvePtyTimeoutMs(undefined, false)).toBe(300_000);
+		expect(resolvePtyTimeoutMs(120_000, false)).toBe(120_000);
+	});
+
+	it("still honours an explicitly disabled deadline", () => {
+		expect(resolvePtyTimeoutMs(0, false)).toBeUndefined();
+	});
+
+	it("floors a non-zero deadline so a tiny value cannot kill on startup", () => {
+		expect(resolvePtyTimeoutMs(5, false)).toBe(1_000);
 	});
 });

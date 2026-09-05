@@ -46,7 +46,7 @@ export async function loadXtermTerminal(): Promise<typeof XtermModule.Terminal> 
 	return xtermTerminalCtor;
 }
 
-function normalizeInputForPty(data: string, applicationCursorKeysMode: boolean): string {
+export function normalizeInputForPty(data: string, applicationCursorKeysMode: boolean): string {
 	const kitty = parseKittySequence(data);
 	if (kitty?.eventType === 3) {
 		return "";

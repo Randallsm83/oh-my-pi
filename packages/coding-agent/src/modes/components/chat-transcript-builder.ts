@@ -324,6 +324,7 @@ export class ChatTranscriptBuilder {
 					images: message.images,
 					showImages: settings.get("terminal.showImages"),
 				});
+				this.#trackExpandable(component);
 				this.container.addChild(component);
 				break;
 			}
@@ -331,6 +332,7 @@ export class ChatTranscriptBuilder {
 				const component = new EvalExecutionComponent(message.code, this.deps.ui, message.excludeFromContext);
 				if (message.output) component.appendOutput(message.output);
 				component.setComplete(message.exitCode, message.cancelled, { truncation: message.meta?.truncation });
+				this.#trackExpandable(component);
 				this.container.addChild(component);
 				break;
 			}

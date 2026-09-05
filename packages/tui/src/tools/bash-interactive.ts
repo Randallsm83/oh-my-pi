@@ -25,7 +25,7 @@ const NATIVE_SHEET_INSET_COLS = 8;
 // Action id of the native Force kill button (mirrors Esc).
 const KILL_ACTION = "kill";
 
-function normalizeInputForPty(data: string, applicationCursorKeysMode: boolean): string {
+export function normalizeInputForPty(data: string, applicationCursorKeysMode: boolean): string {
 	const kitty = parseKittySequence(data);
 	if (kitty?.eventType === 3) {
 		return "";

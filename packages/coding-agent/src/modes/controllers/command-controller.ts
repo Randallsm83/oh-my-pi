@@ -1604,7 +1604,9 @@ export class CommandController {
 		isDeferred: boolean,
 		shouldPersistCwd: boolean,
 	): Promise<boolean> {
-		this.ctx.bashComponent = new BashExecutionComponent(command, this.ctx.ui, excludeFromContext);
+		const component = new BashExecutionComponent(command, this.ctx.ui, excludeFromContext);
+		component.setExpanded(this.ctx.toolOutputExpanded);
+		this.ctx.bashComponent = component;
 
 		if (isDeferred) {
 			this.ctx.pendingMessagesContainer.addChild(this.ctx.bashComponent);
@@ -1615,34 +1617,42 @@ export class CommandController {
 		this.ctx.ui.requestRender();
 
 		try {
-			const result = await this.ctx.session.executeBash(
-				command,
-				chunk => {
-					if (this.ctx.bashComponent) {
-						this.ctx.bashComponent.appendOutput(chunk);
-					}
-				},
-				{
-					excludeFromContext,
-					useUserShell: true,
-					// User-shell zsh/fish `!` commands run on a headless PTY; raw
-					// bytes render through the component's vterm replay (color-safe).
-					pty: {
-						...bashPtyViewport(this.ctx.ui),
-						onChunk: chunk => this.ctx.bashComponent?.appendPtyChunk(chunk),
+			const result = await this.ctx.session.executeBash(command, chunk => component.appendOutput(chunk), {
+				excludeFromContext,
+				useUserShell: true,
+				// User-shell zsh/fish `!` commands run on a headless PTY; raw
+				// bytes render through the component's vterm replay (color-safe).
+				pty: {
+					...bashPtyViewport(this.ctx.ui),
+					onChunk: chunk => component.appendPtyChunk(chunk),
+					onSession: session => {
+						component.setPtyInput(
+							data => {
+								try {
+									session.write(data);
+								} catch {
+									// The command exited between keypress and write.
+								}
+							},
+							() => this.ctx.session.abortBash(),
+						);
+						// Focus is what actually makes the run interactive, and a
+						// deferred command - one fired while the model streams - needs
+						// it just as much: that is precisely when an interactive prompt
+						// would otherwise sit unanswerable. Esc cancels the run and
+						// hands focus back, so the composer is never stranded.
+						this.ctx.ui.setFocus(component);
 					},
 				},
-			);
-			if (this.ctx.bashComponent) {
-				const meta = outputMeta().truncationFromSummary(result, { direction: "tail" }).get();
-				this.ctx.bashComponent.setComplete(result.exitCode, result.cancelled, {
-					output: result.output,
-					truncation: meta?.truncation,
-					artifactError: meta?.artifactError,
-					images: result.images,
-					showImages: cfgTerminalShowImages.get(this.ctx.settings),
-				});
-			}
+			});
+			const meta = outputMeta().truncationFromSummary(result, { direction: "tail" }).get();
+			component.setComplete(result.exitCode, result.cancelled, {
+				output: result.output,
+				truncation: meta?.truncation,
+				artifactError: meta?.artifactError,
+				images: result.images,
+				showImages: cfgTerminalShowImages.get(this.ctx.settings),
+			});
 			try {
 				if (shouldPersistCwd) return await this.#applyBashResultCwd(result);
 			} catch (error) {
@@ -1653,12 +1663,12 @@ export class CommandController {
 				);
 			}
 		} catch (error) {
-			if (this.ctx.bashComponent) {
-				this.ctx.bashComponent.setComplete(undefined, false);
-			}
+			component.setComplete(undefined, false);
 			this.ctx.showError(`Bash command failed: ${error instanceof Error ? error.message : "Unknown error"}`);
 		} finally {
-			this.ctx.bashComponent = undefined;
+			// A newer command may own the keyboard and the active component now.
+			if (this.ctx.ui.getFocused() === component) this.ctx.ui.setFocus(this.ctx.editor);
+			if (this.ctx.bashComponent === component) this.ctx.bashComponent = undefined;
 			this.ctx.ui.requestRender();
 		}
 		return false;
@@ -1685,6 +1695,7 @@ export class CommandController {
 	async handlePythonCommand(code: string, excludeFromContext = false): Promise<void> {
 		const isDeferred = this.ctx.session.isStreaming;
 		this.ctx.pythonComponent = new EvalExecutionComponent(code, this.ctx.ui, excludeFromContext);
+		this.ctx.pythonComponent.setExpanded(this.ctx.toolOutputExpanded);
 
 		if (isDeferred) {
 			this.ctx.pendingMessagesContainer.addChild(this.ctx.pythonComponent);

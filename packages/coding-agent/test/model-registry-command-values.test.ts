@@ -252,7 +252,7 @@ describe("ModelRegistry command-resolved models.yml values", () => {
 		expect(model.headers?.Authorization).toBeUndefined();
 	});
 
-	test("resolveCommandConfig caches failed executions so they do not retry", async () => {
+	test("a failed command-backed apiKey is negative-cached so it does not retry", async () => {
 		const counterFile = path.join(tempDir, "counter.txt");
 		fs.writeFileSync(counterFile, "");
 

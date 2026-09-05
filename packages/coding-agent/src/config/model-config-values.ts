@@ -1,14 +1,5 @@
-import { execSync } from "node:child_process";
-import { $envExact, directoryIsEnterableSync, getProjectDir, logger } from "@oh-my-pi/pi-utils";
-
-const commandValueCache = new Map<string, string>();
-// Failed `!command` resolutions (non-zero exit, empty stdout) are negative-cached
-// with a TTL instead of forever: a transient failure (locked password manager,
-// network hiccup) must not disable the key until process restart, but re-running
-// the command on every resolution would restore the execSync storm this cache
-// exists to prevent. One probe per TTL window bounds both.
-const COMMAND_FAILURE_RETRY_MS = 30_000;
-const commandFailureRetryAt = new Map<string, number>();
+import { $envExact } from "@oh-my-pi/pi-utils";
+import { invalidateCommand, resolveCommandSync } from "./command-value-resolver";
 
 interface ResolveConfigValueOptions {
 	forceCommandRefresh?: boolean;
@@ -28,51 +19,7 @@ export function isCommandConfigValue(valueConfig: string | undefined): valueConf
  */
 export function invalidateCommandConfig(valueConfig: string | undefined): void {
 	if (!isCommandConfigValue(valueConfig)) return;
-	const command = valueConfig.slice(1).trim();
-	commandValueCache.delete(command);
-	commandFailureRetryAt.delete(command);
-}
-
-function resolveCommandConfig(command: string, options?: ResolveConfigValueOptions): string | undefined {
-	if (options?.forceCommandRefresh === true) {
-		commandValueCache.delete(command);
-		commandFailureRetryAt.delete(command);
-	}
-	const cached = commandValueCache.get(command);
-	if (cached !== undefined) return cached;
-	const retryAt = commandFailureRetryAt.get(command);
-	if (retryAt !== undefined && Date.now() < retryAt) return undefined;
-	try {
-		const cwd = getProjectDir();
-		if (!directoryIsEnterableSync(cwd)) {
-			commandFailureRetryAt.set(command, Date.now() + COMMAND_FAILURE_RETRY_MS);
-			return undefined;
-		}
-		const stdout = execSync(command, {
-			cwd,
-			encoding: "utf8",
-			timeout: 10_000,
-			windowsHide: true,
-		});
-		const trimmed = stdout.trim();
-		if (trimmed.length === 0) {
-			commandFailureRetryAt.set(command, Date.now() + COMMAND_FAILURE_RETRY_MS);
-			return undefined;
-		}
-		commandFailureRetryAt.delete(command);
-		commandValueCache.set(command, trimmed);
-		return trimmed;
-	} catch (err) {
-		// The command may embed credentials inline, and execSync's message can
-		// echo the invocation and its output. Log only non-sensitive metadata.
-		const code =
-			typeof (err as NodeJS.ErrnoException | null)?.code === "string"
-				? (err as NodeJS.ErrnoException).code
-				: "unknown";
-		logger.warn("model-config: !command value resolution failed", { code });
-		commandFailureRetryAt.set(command, Date.now() + COMMAND_FAILURE_RETRY_MS);
-		return undefined;
-	}
+	invalidateCommand(valueConfig);
 }
 
 export interface CommandApiKeyResolution {
@@ -85,7 +32,7 @@ export interface CommandApiKeyResolution {
  * checked first and the input falls back to a literal value.
  */
 export function resolveConfigValue(valueConfig: string, options?: ResolveConfigValueOptions): string | undefined {
-	if (valueConfig.startsWith("!")) return resolveCommandConfig(valueConfig.slice(1).trim(), options);
+	if (valueConfig.startsWith("!")) return resolveCommandSync(valueConfig, options?.forceCommandRefresh === true);
 	const envValue = $envExact(valueConfig);
 	if (envValue) return envValue;
 	return valueConfig;

@@ -351,6 +351,7 @@ export class ChatTranscriptBuilder {
 					images: message.images,
 					showImages: displayPreferences.showImages,
 				});
+				this.#trackExpandable(component);
 				this.container.addChild(component);
 				break;
 			}
@@ -361,6 +362,7 @@ export class ChatTranscriptBuilder {
 					truncation: message.meta?.truncation,
 					artifactError: message.meta?.artifactError,
 				});
+				this.#trackExpandable(component);
 				this.container.addChild(component);
 				break;
 			}

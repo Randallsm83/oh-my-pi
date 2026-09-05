@@ -15,7 +15,7 @@ export interface BashInteractiveTerminalBackend {
 // The capture sink owns final output; this caps only the live display backlog.
 const MAX_LIVE_WRITE_QUEUE_CHUNKS = 512;
 
-function normalizeInputForPty(data: string, applicationCursorKeysMode: boolean): string {
+export function normalizeInputForPty(data: string, applicationCursorKeysMode: boolean): string {
 	const kitty = parseKittySequence(data);
 	if (kitty?.eventType === 3) {
 		return "";

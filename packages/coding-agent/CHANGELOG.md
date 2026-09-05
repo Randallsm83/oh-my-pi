@@ -140,6 +140,8 @@
 - The streaming output sink no longer mangles escape sequences that a pipe or PTY read splits in half: sanitizing a chunk ending in `…\x1b[38;2;22` dropped the ESC and left the CSI body behind as literal text in both the transcript and the model's context. A trailing partial sequence is now held back and prepended to the next chunk, mirroring the existing carriage-return carry.
 - The per-line column cap no longer cuts inside an escape sequence (which produced the same literal-CSI residue) and charges only visible bytes, so a colored line keeps as much real text as the same plain line and closes its style before the ellipsis.
 - Interactive PTY commands (`pty: true`) now export `OMP_AGENT_SHELL=1`. That shell is a *login* shell, so rc files detecting an agent run via `OMPCODE` plus a `-c` invocation saw neither marker and loaded the system/interactive profile instead of their agent configuration.
+- A `!command` config value (such as a `models.yml` `apiKey: '!op read …'`) now executes once per process instead of once per resolver. The synchronous and asynchronous resolvers kept separate caches, so every launch ran the command twice — on Windows that is two Windows Hello/PIN prompts instead of one, because app-integration authorization is not inherited by sub-processes.
+- A failing `!command` config value is no longer re-executed on every asynchronous resolution; it now honors the same 30-second retry window the synchronous resolver already applied.
 
 ## [18.1.8] - 2026-09-03
 

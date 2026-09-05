@@ -296,6 +296,7 @@ export class UiHelpers {
 					images: message.images,
 					showImages: cfgTerminalShowImages.get(settings),
 				});
+				component.setExpanded(this.ctx.toolOutputExpanded);
 				this.ctx.chatContainer.addChild(component);
 				break;
 			}
@@ -308,6 +309,7 @@ export class UiHelpers {
 					truncation: message.meta?.truncation,
 					artifactError: message.meta?.artifactError,
 				});
+				component.setExpanded(this.ctx.toolOutputExpanded);
 				this.ctx.chatContainer.addChild(component);
 				break;
 			}

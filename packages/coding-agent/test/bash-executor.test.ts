@@ -11,6 +11,7 @@ import {
 	buildMinimizerOptions,
 	executeBash,
 	isPersistentShellCdCommand,
+	resolvePtyTimeoutMs,
 } from "@oh-my-pi/pi-coding-agent/exec/bash-executor";
 import * as direnvModule from "@oh-my-pi/pi-coding-agent/exec/direnv";
 import { DEFAULT_MAX_BYTES } from "@oh-my-pi/pi-tui/tools/streaming-output";
@@ -1620,5 +1621,32 @@ describe("applyDirenvPreflight direnv-load clamp", () => {
 
 		expect(spy).toHaveBeenCalledTimes(1);
 		expect(spy.mock.calls[0][1]?.timeoutMs).toBe(30_000);
+	});
+});
+
+describe("resolvePtyTimeoutMs", () => {
+	it("gives an interactive run no deadline", () => {
+		// The shipped bug: a `!` command inherited the agent bash tool's
+		// deadline, so a wizard the user was answering by hand was killed
+		// mid-session ("Command timed out after 300 seconds") even though every
+		// keystroke was reaching it.
+		expect(resolvePtyTimeoutMs(300_000, true)).toBeUndefined();
+		expect(resolvePtyTimeoutMs(undefined, true)).toBeUndefined();
+	});
+
+	it("keeps a deadline for a run nothing can answer", () => {
+		// Negative control. Without a session handle no key can be forwarded and
+		// Esc cannot cancel, so dropping the deadline there would make the run
+		// unkillable rather than interactive.
+		expect(resolvePtyTimeoutMs(undefined, false)).toBe(300_000);
+		expect(resolvePtyTimeoutMs(120_000, false)).toBe(120_000);
+	});
+
+	it("still honours an explicitly disabled deadline", () => {
+		expect(resolvePtyTimeoutMs(0, false)).toBeUndefined();
+	});
+
+	it("floors a non-zero deadline so a tiny value cannot kill on startup", () => {
+		expect(resolvePtyTimeoutMs(5, false)).toBe(1_000);
 	});
 });

@@ -556,6 +556,19 @@ async function executeUserShellPty(run: {
 	};
 }
 
+/**
+ * The deadline for a PTY run; `undefined` disables it.
+ *
+ * `interactive` means the caller took the session handle and is forwarding
+ * keystrokes, so a human is driving the run and is its own deadline. This lives
+ * in a named function because the interactive branch is reachable only through
+ * a UI-focused `!` command, which no test of `executeBash` itself can set up.
+ */
+export function resolvePtyTimeoutMs(requestedMs: number | undefined, interactive: boolean): number | undefined {
+	if (interactive || requestedMs === 0) return undefined;
+	return Math.max(1_000, requestedMs ?? 300_000);
+}
+
 export async function executeBash(command: string, options?: BashExecutorOptions): Promise<BashResult> {
 	const settings = await Settings.init();
 	const baseShellConfig = settings.getShellConfig();
@@ -676,6 +689,8 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 
 	if (usePty && ptyRequest) {
 		const requestedMs = options?.timeout;
+		// A stdin writer makes this a human-driven run; its owner handles cancellation.
+		const interactive = ptyRequest.onStdin !== undefined;
 		try {
 			return await executeUserShellPty({
 				shell,
@@ -684,7 +699,7 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 				cwd: commandCwd,
 				env: buildUserShellPtyEnv(shellEnv, commandEnv),
 				pty: ptyRequest,
-				timeoutMs: requestedMs === 0 ? undefined : Math.max(1_000, requestedMs ?? 300_000),
+				timeoutMs: resolvePtyTimeoutMs(requestedMs, interactive),
 				signal: options?.signal,
 				sink,
 				graphics,

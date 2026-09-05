@@ -73,7 +73,7 @@ function createCwdContext(sourceDir: string, isStreaming = false, showImages = t
 		pendingShellContainer,
 		pendingBashComponents: [],
 		settings: Settings.isolated({ "terminal.showImages": showImages }),
-		ui: { requestRender: vi.fn(), requestComponentRender: vi.fn() },
+		ui: { requestRender: vi.fn(), requestComponentRender: vi.fn(), getFocused: () => undefined, setFocus: vi.fn() },
 		present,
 		showError: vi.fn(),
 		showWarning: vi.fn(),
@@ -615,5 +615,66 @@ describe("bash shortcut command", () => {
 		} finally {
 			await fs.rm(sourceDir, { recursive: true, force: true });
 		}
+	});
+
+	// A `!` command's block is created after the session-global `ctrl+o` state
+	// already exists, so it must adopt it. When it did not, an expanded session
+	// still produced a collapsed block advertising `ctrl+o to expand`, and the
+	// press it advertised flipped the global flag *off* — leaving the block
+	// collapsed until a second press.
+	it.each([
+		[true, false],
+		[false, true],
+	])("inherits toolOutputExpanded=%p into the block it presents", async (expanded, expectHint) => {
+		const lines = Array.from({ length: 30 }, (_, index) => `line-${index + 1}`);
+		const output = lines.join("\n");
+		const present = vi.fn();
+		const ctx = {
+			session: {
+				isStreaming: false,
+				executeBash: vi.fn(async () => ({
+					output,
+					exitCode: 0,
+					cancelled: false,
+					truncated: false,
+					totalLines: lines.length,
+					totalBytes: output.length,
+					outputLines: lines.length,
+					outputBytes: output.length,
+				})),
+			},
+			sessionManager: { getCwd: () => "/tmp" },
+			chatContainer: createContainer(),
+			pendingMessagesContainer: createContainer(),
+			pendingBashComponents: [],
+			settings: Settings.isolated(),
+			ui: {
+				requestRender: vi.fn(),
+				requestComponentRender: vi.fn(),
+				getFocused: () => undefined,
+				setFocus: vi.fn(),
+			},
+			present,
+			showError: vi.fn(),
+			applyCwdChange: vi.fn(async () => {}),
+			updateEditorBorderColor: vi.fn(),
+			reloadTodos: vi.fn(async () => {}),
+			toolOutputExpanded: expanded,
+		} as unknown as InteractiveModeContext;
+
+		await new CommandController(ctx).handleBashCommand("seq 1 30");
+
+		const component = present.mock.calls[0]?.[0];
+		expect(component).toBeInstanceOf(BashExecutionComponent);
+		// Each output line is styled, so compare stripped whole lines: `line-1`
+		// is otherwise a substring of `line-10`..`line-19`, which sit inside the
+		// collapsed tail window and would mask the difference.
+		const plain = Bun.stripANSI((component as BashExecutionComponent).render(120).join("\n"));
+		const plainLines = plain.split("\n").map(line => line.trim());
+		// The tail is always in the preview window; the head is only reachable
+		// once the block is expanded, so it discriminates the two states.
+		expect(plainLines).toContain("line-30");
+		expect(plainLines.includes("line-1")).toBe(expanded);
+		expect(plain.includes("ctrl+o to expand")).toBe(expectHint);
 	});
 });

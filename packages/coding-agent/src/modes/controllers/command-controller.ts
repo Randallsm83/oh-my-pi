@@ -1890,6 +1890,7 @@ export class CommandController {
 		shouldPersistCwd: boolean,
 	): Promise<boolean> {
 		const component = new BashExecutionComponent(command, this.ctx.ui, excludeFromContext);
+		component.setExpanded(this.ctx.toolOutputExpanded);
 		this.ctx.bashComponent = component;
 		let detachInput: (() => void) | undefined;
 		let finished = false;
@@ -1951,9 +1952,7 @@ export class CommandController {
 				);
 			}
 		} catch (error) {
-			if (this.ctx.bashComponent) {
-				this.ctx.bashComponent.setComplete(undefined, false);
-			}
+			component.setComplete(undefined, false);
 			this.ctx.showError(`Bash command failed: ${error instanceof Error ? error.message : "Unknown error"}`);
 		} finally {
 			finished = true;
@@ -2005,6 +2004,7 @@ export class CommandController {
 	async handlePythonCommand(code: string, excludeFromContext = false): Promise<void> {
 		const isDeferred = this.ctx.session.isStreaming;
 		this.ctx.pythonComponent = new EvalExecutionComponent(code, this.ctx.ui, excludeFromContext);
+		this.ctx.pythonComponent.setExpanded(this.ctx.toolOutputExpanded);
 
 		if (isDeferred) {
 			this.ctx.pendingShellContainer.addChild(this.ctx.pythonComponent);

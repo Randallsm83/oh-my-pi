@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { getThemeByName } from "@oh-my-pi/pi-tui/theme/theme";
-import { styleOutputBlock, styleOutputLine } from "@oh-my-pi/pi-tui/render/render-utils";
+import { styleOutputLine } from "@oh-my-pi/pi-tui/render/render-utils";
 
 const RESET = "\x1b[0m";
 
@@ -41,22 +41,5 @@ describe("styleOutputLine", () => {
 
 		// Cursor movement must never reach the terminal from tool output.
 		expect(styleOutputLine("a\x1b[2Kb", t)).toBe(`${base}ab${RESET}`);
-	});
-});
-
-describe("styleOutputBlock", () => {
-	it("styles each line of a colored block independently", async () => {
-		const t = await theme();
-		const base = t.getFgAnsi("toolOutput");
-
-		expect(styleOutputBlock(`\x1b[34mdir\x1b[0m\nfile`, t)).toBe(
-			`${base}\x1b[34mdir${RESET}${base}${RESET}\n${base}file${RESET}`,
-		);
-	});
-
-	it("wraps an escape-free block once, unchanged from the previous renderer", async () => {
-		const t = await theme();
-
-		expect(styleOutputBlock("one\ntwo", t)).toBe(t.fg("toolOutput", "one\ntwo"));
 	});
 });

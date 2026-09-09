@@ -1559,11 +1559,8 @@ export class ToolExecutionComponent extends Container {
 					);
 					if (resultComponent) {
 						this.#contentBox.addChild(
-							new SafeToolRendererComponent(
-								this.#toolName,
-								"result",
-								resultComponent,
-								() => this.#createTextOutputComponent(),
+							new SafeToolRendererComponent(this.#toolName, "result", resultComponent, () =>
+								this.#createTextOutputComponent(),
 							),
 						);
 					}
@@ -1716,11 +1713,8 @@ export class ToolExecutionComponent extends Container {
 						);
 						if (resultComponent) {
 							this.#contentBox.addChild(
-								new SafeToolRendererComponent(
-									this.#toolName,
-									"result",
-									resultComponent,
-									() => this.#createTextOutputComponent(),
+								new SafeToolRendererComponent(this.#toolName, "result", resultComponent, () =>
+									this.#createTextOutputComponent(),
 								),
 							);
 						}
@@ -1927,7 +1921,11 @@ export class ToolExecutionComponent extends Container {
 		if (!output) return undefined;
 		const lines = replaceTabs(output).split("\n");
 		const sixelLineMask = getSixelLineMask(lines);
-		return new Text(lines.map((line, index) => (sixelLineMask[index] ? line : styleOutputLine(line, theme))).join("\n"), 0, 0);
+		return new Text(
+			lines.map((line, index) => (sixelLineMask[index] ? line : styleOutputLine(line, theme))).join("\n"),
+			0,
+			0,
+		);
 	}
 
 	#getTextOutput(): string {

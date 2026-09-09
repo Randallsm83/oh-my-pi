@@ -1204,6 +1204,29 @@ describe("terminal title runtime", () => {
 		}
 	});
 
+	it("publishes Windows WezTerm state without per-frame OSC traffic", () => {
+		const originalPlatform = process.platform;
+		process.env.WEZTERM_PANE = "13";
+		try {
+			Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+			setSessionTerminalTitle("working-project");
+			resetEmitted();
+			setTerminalTitleState("working");
+			expect(writes).toEqual([
+				`\x1b]1337;SetUserVar=OMP_TITLE=${Buffer.from("π : working-project").toString("base64")}\x07`,
+			]);
+			resetEmitted();
+			vi.advanceTimersByTime(400);
+			expect(writes).toEqual([]);
+			setTerminalTitleState("attention");
+			expect(writes).toEqual([
+				`\x1b]1337;SetUserVar=OMP_TITLE=${Buffer.from("π ! working-project").toString("base64")}\x07`,
+			]);
+		} finally {
+			Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+		}
+	});
+
 	it("clears the pane-local WezTerm title during teardown", () => {
 		process.env.WEZTERM_PANE = "13";
 		setTerminalTitle("finished session");

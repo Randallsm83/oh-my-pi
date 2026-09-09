@@ -698,11 +698,11 @@ export const TERMINAL_TITLE_SPINNER_STYLES: Record<TerminalTitleSpinnerStyle, re
 	line: ["-", "\\", "|", "/"],
 };
 
-/** WSL stdout still crosses ConPTY at the `wslhost` boundary, so its working title stays static (`:`). */
+/** WSL titles and Windows WezTerm pane variables cross ConPTY, so keep their working state static. */
 const isStaticTitleHost = (
 	platform: NodeJS.Platform = process.platform,
 	env: NodeJS.ProcessEnv = $env as NodeJS.ProcessEnv,
-): boolean => isWsl(platform, env);
+): boolean => isWsl(platform, env) || (platform === "win32" && !!env.WEZTERM_PANE);
 const STATIC_TITLE_WORKING_SEPARATOR = ":";
 const TITLE_SPINNER_INTERVAL_MS = 80;
 /** The user's turn: the title reads like a shell prompt awaiting input. */
@@ -835,7 +835,7 @@ function startTerminalTitleSpinner(): void {
 
 /**
  * Reflect the agent run state in the terminal title's separator: `working`
- * animates (static `:` under WSL), `idle` shows `>` (your turn), and
+ * animates (static `:` under WSL or Windows WezTerm), `idle` shows `>` (your turn), and
  * `attention` shows `!` (agent blocked on you). Gated off by `tui.titleState`.
  */
 export function setTerminalTitleState(state: TerminalTitleState): void {

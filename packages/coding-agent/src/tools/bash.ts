@@ -1471,4 +1471,3 @@ export class BashTool implements AgentTool<BashToolSchema, BashToolDetails> {
 		});
 	}
 }
-

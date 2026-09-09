@@ -1196,13 +1196,3 @@ export function toPathList(input: string | string[] | undefined): string[] {
 export function styleOutputLine(line: string, theme: Theme, color: ThemeColor = "toolOutput"): string {
 	return line.includes("\x1b") ? styleTerminalRow(line, theme.getFgAnsi(color)) : theme.fg(color, line);
 }
-
-/** {@link styleOutputLine} applied to every line of a multi-line block. */
-export function styleOutputBlock(output: string, theme: Theme, color: ThemeColor = "toolOutput"): string {
-	if (!output.includes("\x1b")) return theme.fg(color, output);
-	const base = theme.getFgAnsi(color);
-	return output
-		.split("\n")
-		.map(line => styleTerminalRow(line, base))
-		.join("\n");
-}

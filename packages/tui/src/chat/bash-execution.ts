@@ -16,8 +16,12 @@ import type { MinimizedMeta, TruncationMeta } from "../tools/output-meta";
 import { resolveImageOptions, styleOutputLine } from "../render/render-utils";
 import { OutputPane } from "../render/output-pane";
 import { normalizeInputForPty } from "../tools/bash-interactive";
-import { loadXtermTerminal, readTerminalRows, sanitizeTextKeepingSafeSgr, styleTerminalRow } from "../tools/terminal-output";
-import { normalizeInputForPty } from "../tools/bash-interactive";
+import {
+	loadXtermTerminal,
+	readTerminalRows,
+	sanitizeTextKeepingSafeSgr,
+	styleTerminalRow,
+} from "../tools/terminal-output";
 import { getSixelLineMask, isSixelPassthroughEnabled, sanitizeWithOptionalSixelPassthrough } from "../render/sixel";
 import {
 	buildExecutionFrame,

@@ -16,7 +16,6 @@ export interface BashInteractiveResult extends OutputSummary {
 	images?: ImageContent[];
 }
 
-
 export async function runInteractiveBashPty(
 	ui: Pick<NonNullable<AgentToolContext["ui"]>, "custom">,
 	options: {

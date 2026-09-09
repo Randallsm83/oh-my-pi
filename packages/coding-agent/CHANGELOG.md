@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `bash.userShell` to run model-issued shell commands with the configured user shell, aliases, and functions.
+- Added `bash.color` to preserve command colors in shell output.
+
+### Fixed
+
+- Published pane-local agent status to WezTerm, with static working indicators on Windows, and cleared it when OMP exits.
+- Preserved split escape sequences and visible-text limits in colored shell output.
+- Interactive PTY commands now identify themselves to agent-aware shell startup configuration.
+- User `!` commands accept keyboard input, repaint promptly, and remain open without the model tool deadline while interactive input is available.
+- Bash and eval output blocks inherit expansion state in live sessions, restored sessions, and transcript viewers.
+- Preserved SIXEL images in tool-result fallback output.
+
 ## [18.8.0] - 2026-10-07
 
 ### Added

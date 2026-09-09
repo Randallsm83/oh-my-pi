@@ -629,7 +629,7 @@ exit 64
 		}
 
 		const shellDir = fs.mkdtempSync(path.join(os.tmpdir(), "omp-zsh-pty-input-"));
-		Settings.instance.set("shellPath", zshPath);
+		cfgShellPath.set(Settings.instance, zshPath);
 
 		vi.spyOn(Settings.prototype, "getShellConfig").mockReturnValue({
 			shell: zshPath,

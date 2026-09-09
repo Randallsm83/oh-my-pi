@@ -44,9 +44,13 @@ describe("buildTerminalTitleWithState", () => {
 	});
 
 	it("animates spinner frames in the separator slot while working on Windows", () => {
-		expect(buildTerminalTitleWithState(LABEL, "working", 0, true, "win32")).toBe(`${BRAND} ⠋ ${LABEL}`);
-		expect(buildTerminalTitleWithState(LABEL, "working", 1, true, "win32")).toBe(`${BRAND} ⠙ ${LABEL}`);
-		expect(buildTerminalTitleWithState(undefined, "working", 1, true, "win32")).toBe(`${BRAND} ⠙`);
+		expect(buildTerminalTitleWithState(LABEL, "working", 0, true, "win32", "braille", {})).toBe(
+			`${BRAND} ⠋ ${LABEL}`,
+		);
+		expect(buildTerminalTitleWithState(LABEL, "working", 1, true, "win32", "braille", {})).toBe(
+			`${BRAND} ⠙ ${LABEL}`,
+		);
+		expect(buildTerminalTitleWithState(undefined, "working", 1, true, "win32", "braille", {})).toBe(`${BRAND} ⠙`);
 	});
 
 	it("keeps the state visible as a trailing separator when there is no label", () => {
@@ -76,9 +80,9 @@ describe("buildTerminalTitleWithState", () => {
 	});
 
 	it("cycles the selected style on Windows too", () => {
-		expect(buildTerminalTitleWithState(LABEL, "working", 0, true, "win32", "dots")).toBe(`${BRAND} ⠁ ${LABEL}`);
-		expect(buildTerminalTitleWithState(LABEL, "working", 0, true, "win32", "pulse")).toBe(`${BRAND} ○ ${LABEL}`);
-		expect(buildTerminalTitleWithState(LABEL, "working", 0, true, "win32", "line")).toBe(`${BRAND} - ${LABEL}`);
+		expect(buildTerminalTitleWithState(LABEL, "working", 0, true, "win32", "dots", {})).toBe(`${BRAND} ⠁ ${LABEL}`);
+		expect(buildTerminalTitleWithState(LABEL, "working", 0, true, "win32", "pulse", {})).toBe(`${BRAND} ○ ${LABEL}`);
+		expect(buildTerminalTitleWithState(LABEL, "working", 0, true, "win32", "line", {})).toBe(`${BRAND} - ${LABEL}`);
 	});
 
 	it("keeps a static colon under WSL regardless of style", () => {
@@ -134,11 +138,14 @@ describe("disposeTerminalTitleState", () => {
 	// Under WSL the working title is a static `:` by design; hide the host's WSL markers so the spinner ticks.
 	const wslEnvKeys = ["WSL_DISTRO_NAME", "WSL_INTEROP"] as const;
 	let savedWslEnv: Record<string, string | undefined> = {};
+	let weztermPaneEnv: string | undefined;
 
 	beforeEach(() => {
 		vi.useFakeTimers();
 		savedWslEnv = Object.fromEntries(wslEnvKeys.map(key => [key, Bun.env[key]]));
 		for (const key of wslEnvKeys) delete Bun.env[key];
+		weztermPaneEnv = process.env.WEZTERM_PANE;
+		delete process.env.WEZTERM_PANE;
 
 		prevHeadless = setTerminalHeadless(false);
 		ttyDescriptor = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
@@ -178,6 +185,8 @@ describe("disposeTerminalTitleState", () => {
 			if (value === undefined) delete Bun.env[key];
 			else Bun.env[key] = value;
 		}
+		if (weztermPaneEnv === undefined) delete process.env.WEZTERM_PANE;
+		else process.env.WEZTERM_PANE = weztermPaneEnv;
 	});
 
 	it("stops the spinner so no further OSC-title write fires on a tick after dispose", () => {

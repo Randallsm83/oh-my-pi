@@ -588,6 +588,6 @@ describe("bash shortcut command", () => {
 		// once the block is expanded, so it discriminates the two states.
 		expect(plainLines).toContain("line-30");
 		expect(plainLines.includes("line-1")).toBe(expanded);
-		expect(plain.includes("ctrl+o to expand")).toBe(expectHint);
+		expect(plain.includes("to expand")).toBe(expectHint);
 	});
 });

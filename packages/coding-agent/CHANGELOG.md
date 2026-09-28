@@ -19,6 +19,7 @@
 - User `!` commands accept keyboard input, repaint promptly, and remain open without the model tool deadline while interactive input is available.
 - Bash and eval output blocks inherit expansion state in live sessions, restored sessions, and transcript viewers.
 - Preserved SIXEL images in tool-result fallback output.
+- Tool calls to `xd://` devices spelled as underscore function names (`xd_recall`, `xd___mcp__qdrant_find`) now reach the mounted device instead of failing as not found.
 
 ## [18.8.0] - 2026-10-07
 

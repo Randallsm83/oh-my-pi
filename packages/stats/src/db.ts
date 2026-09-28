@@ -97,11 +97,10 @@ const USER_MESSAGE_LINKS_REPAIR_KEY = "user_message_links_v1";
 const PRIORITY_PREMIUM_REQUESTS_BACKFILL_KEY = "premium_requests_priority_v2";
 const AGENT_TYPE_BACKFILL_KEY = "agent_type_v1";
 const FORK_DEDUPE_KEY = "fork_dedupe_v1";
-// v2: tool-name sanitization at ingest (see `sanitizeToolName` in parser.ts)
-// collapses provider-side garbage names; a full re-parse replaces the polluted
-// rows already stored in existing databases.
-// v3: reclassify synthetic non-executions so historical tool error rates are corrected.
-const TOOL_CALLS_BACKFILL_KEY = "tool_calls_v3";
+// v4: retain v2 tool-name sanitization and upstream v3 synthetic non-execution
+// classification while re-attributing mounted `xd://` calls. Both upstream and
+// this fork previously used v3 for different repairs, so re-parse both histories.
+const TOOL_CALLS_BACKFILL_KEY = "tool_calls_v4";
 // Older ingests dropped `Usage.orchestration` (never a stored column) when
 // pricing, so subscription models billed on orchestration tokens — multi-agent
 // Grok most notably — were priced from conversation buckets alone and could not

@@ -13,7 +13,8 @@ import {
 	type Usage,
 } from "@oh-my-pi/pi-ai";
 import { classifyModel } from "@oh-my-pi/pi-catalog/compat/taxonomy";
-import { getSessionsDir, isEnoent, readLines } from "@oh-my-pi/pi-utils";
+import { parseXdUrl } from "@oh-my-pi/pi-tui/tools/xd-url";
+import { getSessionsDir, isEnoent, isRecord, readLines } from "@oh-my-pi/pi-utils";
 import type {
 	AgentType,
 	MessageStatsInput,
@@ -344,6 +345,19 @@ function coerceEntryTimestamp(timestamp: number | undefined, entry: SessionMessa
 }
 
 /**
+ * Mounted tools (MCP servers, plugin tools, memory devices) are invoked as
+ * `write xd://<tool>`, so the persisted block name is `write` and every call
+ * would otherwise aggregate under the write tool. Attribute the row to the
+ * device instead. `read xd://<tool>` only fetches the tool's docs and stays a
+ * `read` — counting it as an invocation would inflate call counts.
+ */
+function resolveToolName(block: ToolCall): string {
+	if (block.name !== "write" || !isRecord(block.arguments)) return block.name;
+	const target = block.arguments.path;
+	return (typeof target === "string" && parseXdUrl(target)?.name) || block.name;
+}
+
+/**
  * Extract one {@link ToolCallStats} per `toolCall` content block of an
  * assistant message. Returns an empty array for turns without tool calls.
  */
@@ -374,7 +388,7 @@ function extractToolCalls(
 		// Names reduced to nothing by sanitization carry no tool identity:
 		// skip them rather than attributing usage to garbage (see
 		// sanitizeToolName). callsInTurn still counts the raw block total.
-		const toolName = sanitizeToolName(block.name);
+		const toolName = sanitizeToolName(resolveToolName(block));
 		if (toolName === null) continue;
 		let argsChars = 0;
 		try {

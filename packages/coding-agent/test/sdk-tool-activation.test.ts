@@ -2587,6 +2587,99 @@ describe("createAgentSession defaultInactive tool activation", () => {
 		});
 	});
 
+	it("recovers xd:// device calls flattened into underscore function names", async () => {
+		// Models sometimes turn `xd://<tool>` into a function name by replacing
+		// `://` with underscores. These are the exact spellings seen in real
+		// sessions; each must reach its mounted device, and the recorded call
+		// must carry the device's own name so replay never sends the alias.
+		const tempDir = makeTempDir();
+		const target = path.join(tempDir, "sample.txt");
+		fs.writeFileSync(target, "alpha\nbeta\n");
+		const executed: string[] = [];
+		const stubDevice = (name: string, extra: Partial<CustomTool> = {}): CustomTool => ({
+			name,
+			label: name,
+			description: `Stub ${name}`,
+			parameters: type({}),
+			async execute() {
+				executed.push(name);
+				return { content: [{ type: "text", text: `${name} ran` }] };
+			},
+			...extra,
+		});
+
+		await withProviderAuth(["openai"], async () => {
+			const { session } = await createAgentSession({ ...baseOptions(tempDir), customTools: [stubDevice("recall")] });
+			try {
+				await session.refreshMCPTools([
+					stubDevice("mcp__huggingface_hf_fs", { mcpServerName: "huggingface", mcpToolName: "hf_fs" }),
+					stubDevice("mcp__qdrant_find", { mcpServerName: "qdrant", mcpToolName: "find" }),
+				]);
+				expect(session.getMountedXdevToolNames()).toEqual(
+					expect.arrayContaining(["recall", "mcp__huggingface_hf_fs", "mcp__qdrant_find"]),
+				);
+				// `edit` stays advertised: the resolver's advertised arm must still
+				// refuse to map the flattened `xd_edit` onto it.
+				expect(session.getActiveToolNames()).toContain("edit");
+
+				const calls = [
+					["xd_recall", "recall"],
+					["xd___recall", "recall"],
+					["xd__mcp__huggingface_hf_fs", "mcp__huggingface_hf_fs"],
+					["xd___mcp__qdrant_find", "mcp__qdrant_find"],
+				] as const;
+				const mock = createMockModel({
+					responses: [
+						{
+							content: [
+								...calls.map(([name], index) => ({
+									type: "toolCall" as const,
+									id: `flattened-${index}`,
+									name,
+									arguments: {},
+								})),
+								{
+									type: "toolCall",
+									id: "flattened-edit",
+									name: "xd_edit",
+									arguments: { path: target, old_string: "beta", new_string: "gamma" },
+								},
+							],
+						},
+						{ content: [{ type: "text", text: "done" }] },
+					],
+				});
+				vi.spyOn(session.agent, "streamFn").mockImplementation(mock.stream);
+
+				await session.prompt("hi");
+
+				const results = new Map(
+					session.messages
+						.filter((message): message is ToolResultMessage => message.role === "toolResult")
+						.map(message => [message.toolCallId, message]),
+				);
+				for (const [index, [, device]] of calls.entries()) {
+					const result = results.get(`flattened-${index}`);
+					expect(result?.isError).toBeFalsy();
+					expect(JSON.stringify(result?.content)).toContain(`${device} ran`);
+				}
+				expect(executed).toEqual(calls.map(([, device]) => device));
+
+				const recordedNames = session.messages
+					.flatMap(message => (message.role === "assistant" ? message.content : []))
+					.flatMap(block => (block.type === "toolCall" ? [block.name] : []));
+				expect(recordedNames).toEqual([...calls.map(([, device]) => device), "xd_edit"]);
+
+				const editResult = results.get("flattened-edit");
+				expect(editResult?.isError).toBe(true);
+				expect(JSON.stringify(editResult?.content)).toContain("Tool xd_edit not found");
+				expect(fs.readFileSync(target, "utf8")).toBe("alpha\nbeta\n");
+			} finally {
+				await session.dispose();
+			}
+		});
+	});
+
 	it("runs advisor tools through the approval gate", async () => {
 		// The advisor's tools are built straight from `BUILTIN_TOOLS`, outside
 		// the registry loop that wraps everything else. Its own loop and its

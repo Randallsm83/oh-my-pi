@@ -134,7 +134,7 @@ import {
 import { type FileSlashCommand, loadSlashCommands as loadSlashCommandsInternal } from "./extensibility/slash-commands";
 import type { HindsightSessionState } from "./hindsight/state";
 import { LocalProtocolHandler, type LocalProtocolOptions } from "./internal-urls";
-import { stripXdUrlPrefix } from "@oh-my-pi/pi-tui/tools/xd-url";
+import { stripFlattenedXdPrefix, stripXdUrlPrefix } from "@oh-my-pi/pi-tui/tools/xd-url";
 import { setSharedLspEnabled } from "./lsp/client";
 import { LSP_STARTUP_EVENT_CHANNEL, type LspStartupEvent } from "./lsp/startup-events";
 import {
@@ -3554,8 +3554,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 		// advertised while exact dispatch still answered from the snapshot.
 		// Callers with no request snapshot (the Cursor exec bridge) pass none and
 		// get device resolution only.
-		const resolveDeviceTool = (name: string, advertised: readonly AgentTool[] = []): AgentTool | undefined => {
-			const bareName = stripXdUrlPrefix(name);
+		const resolveDeviceName = (bareName: string, advertised: readonly AgentTool[]): AgentTool | undefined => {
 			const state = toolSession.xdev;
 			// An exact mounted name is the name itself, not a guess.
 			const exactDevice = state ? resolveMountedXdevExecutable(state, bareName) : undefined;
@@ -3578,6 +3577,16 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 					(state ? resolveMountedXdevExecutable(state, candidate) : undefined) ??
 					advertised.find(tool => tool.name === candidate),
 			);
+		};
+		const resolveDeviceTool = (name: string, advertised: readonly AgentTool[] = []): AgentTool | undefined => {
+			const bareName = stripXdUrlPrefix(name);
+			const resolved = resolveDeviceName(bareName, advertised);
+			if (resolved) return resolved;
+			// Retried only after the literal name missed, so a device genuinely
+			// named `xd_*` still wins. The retry reaches the same device-only set,
+			// which keeps `xd_edit` away from the first-party `edit`.
+			const unflattened = stripFlattenedXdPrefix(bareName);
+			return unflattened === bareName ? undefined : resolveDeviceName(unflattened, advertised);
 		};
 		// Mounted devices are absent from the advertised tool set, so a miss on a
 		// device name has nothing to suggest unless the loop is told they exist.

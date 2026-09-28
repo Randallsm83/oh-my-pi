@@ -7,6 +7,16 @@ export function stripXdUrlPrefix(name: string): string {
 }
 
 /**
+ * Strips an `xd://` prefix flattened into a function name, where `://` became
+ * one to three underscores (`xd_recall`, `xd___mcp__qdrant_find`). Names with
+ * no such prefix come back unchanged. Only a device lookup that already missed
+ * on the literal name should apply this: it can rename a real tool.
+ */
+export function stripFlattenedXdPrefix(name: string): string {
+	return name.replace(/^xd_{1,3}/i, "");
+}
+
+/**
  * Parse an `xd://` URL into its device target.
  * Returns `null` for other or malformed URLs and `name: null` for the root.
  */

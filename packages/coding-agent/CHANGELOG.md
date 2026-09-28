@@ -7,6 +7,10 @@
 - Added `bash.userShell` to run model-issued shell commands with the configured user shell, aliases, and functions.
 - Added `bash.color` to preserve command colors in shell output.
 
+### Changed
+
+- Advisor notes raised while the agent is mid-run now reach it at its next tool step instead of being held until the run finishes; non-blockers still never interrupt.
+
 ### Fixed
 
 - Published pane-local agent status to WezTerm, with static working indicators on Windows, and cleared it when OMP exits.

@@ -323,8 +323,8 @@ describe("tool usage stats pipeline", () => {
 		// Model a database last synced before non-executions were classified separately.
 		const database = await initDb();
 		database.run("UPDATE tool_calls SET is_error = 1 WHERE tool_call_id = 'call-skipped'");
-		database.run("INSERT OR REPLACE INTO meta VALUES ('tool_calls_v2', 'complete')");
-		database.run("DELETE FROM meta WHERE key = 'tool_calls_v3'");
+		database.run("INSERT OR REPLACE INTO meta VALUES ('tool_calls_v3', 'complete')");
+		database.run("DELETE FROM meta WHERE key = 'tool_calls_v4'");
 		closeDb();
 
 		await syncAllSessions({ workers: 1 });

@@ -150,14 +150,14 @@ describe("behavior backfill", () => {
 		const database = new Database(getStatsDbPath(), { readonly: true });
 		const rows = database
 			.query(
-				"SELECT key, value FROM meta WHERE key IN ('user_messages_v10', 'tool_calls_v3', 'premium_requests_priority_v2') ORDER BY key",
+				"SELECT key, value FROM meta WHERE key IN ('user_messages_v10', 'tool_calls_v4', 'premium_requests_priority_v2') ORDER BY key",
 			)
 			.all() as { key: string; value: string }[];
 		database.close();
 
 		expect(rows).toEqual([
 			{ key: "premium_requests_priority_v2", value: "complete" },
-			{ key: "tool_calls_v3", value: "complete" },
+			{ key: "tool_calls_v4", value: "complete" },
 			{ key: "user_messages_v10", value: "complete" },
 		]);
 	});

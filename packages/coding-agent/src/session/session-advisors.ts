@@ -658,19 +658,13 @@ export class SessionAdvisors {
 		// Delivery state follows primary boundaries even when review cadence skips a callback.
 		this.#advisorPrimaryWillContinue = willContinue === true;
 		this.#advisorPrimaryTurnsCompleted++;
-		// Marks the terminal-boundary window (flush + catch-up wait) for
+		// Marks the terminal-boundary window (catch-up wait) for
 		// #routeAdvice: the loop still reports isStreaming here, but the turn IS
 		// final, so non-blocker notes must preserve instead of steering a fresh
 		// turn against completed work.
 		this.#advisorTerminalBoundaryOpen = !this.#advisorPrimaryWillContinue;
 		try {
 			this.#retuneAutoThinkingAdvisors();
-			if (!this.#advisorPrimaryWillContinue) {
-				// Flush notes deferred during tool-loop steps at every terminal boundary.
-				// Delivery never pauses: advice already produced against work the
-				// reviewers saw still reaches the primary during an advisor continuation.
-				for (const advisor of this.#advisors) advisor.adviseTool.flushDeferredNotes();
-			}
 			// A boundary of a continuation the advisor itself started is captured but
 			// never schedules a review: the next genuinely started boundary reviews it.
 			const continuation = this.#advisorContinuation;
@@ -1337,7 +1331,7 @@ export class SessionAdvisors {
 			// accepted notes and acknowledges truthfully. No separate accept wrapper.
 			const emissionGuard = new AdvisorEmissionGuard({ budgetPerUpdate });
 			const adviseTool = new AdviseTool(
-				(note, severity, turn) => this.#routeAdvice(advisorRef, note, severity, turn),
+				(note, severity, inProgress, turn) => this.#routeAdvice(advisorRef, note, severity, inProgress, turn),
 				emissionGuard,
 			);
 
@@ -1604,12 +1598,10 @@ export class SessionAdvisors {
 				getModelIdentity: () => formatModelString(advisorRef.agent.state.model),
 				beginAdvisorUpdate: inProgress => {
 					advisorRef.recorder.beginTurn();
-					// Flushes the deferred backlog on the in-progress→completed
-					// transition (notes already cleared admission when reserved) and
-					// resets the guard's per-update budget for this prompt's live
-					// notes — both owned by the tool now. A queued WIP review may
-					// start after a terminal boundary flushed deferred notes; do not
-					// re-arm in-progress deferral.
+					// Resets the guard's per-update budget and records whether this
+					// update reviews an in-progress primary turn. A queued WIP review
+					// may start after the terminal boundary; do not re-arm in-progress
+					// routing then.
 					advisorRef.adviseTool.beginUpdate(
 						inProgress && this.#advisorPrimaryWillContinue,
 						advisorRef.pendingCoveredTurn,
@@ -1700,22 +1692,31 @@ export class SessionAdvisors {
 		}
 
 		// One shared non-blocking aside channel for all advisors; the build callback
-		// aggregates every advisor's queued nits into one card (each entry already
+		// aggregates every advisor's queued notes into one card (each entry already
 		// carries its own `advisor` name).
 		if (this.#advisors.length > 0 && !this.#advisorYieldQueueUnsubscribe) {
 			this.#advisorYieldQueueUnsubscribe = this.#host.yieldQueue.register<AdvisorNote>("advisor", {
-				build: entries =>
-					entries.length === 0
-						? null
-						: ({
-								role: "custom",
-								customType: "advisor",
-								display: true,
-								attribution: "agent",
-								timestamp: Date.now(),
-								content: formatAdvisorBatchContent(entries),
-								details: { notes: entries } satisfies AdvisorMessageDetails,
-							} satisfies CustomMessage),
+				build: entries => {
+					if (entries.length === 0) return null;
+					const card: CustomMessage = {
+						role: "custom",
+						customType: "advisor",
+						display: true,
+						attribution: "agent",
+						timestamp: Date.now(),
+						content: formatAdvisorBatchContent(entries),
+						details: { notes: entries } satisfies AdvisorMessageDetails,
+					};
+					// Built lazily at injection. At the primary's stop boundary after a
+					// final text answer, injecting would wake it for an extra turn about
+					// work it already finished; keep the notes as a visible card instead,
+					// matching the route-time rule for late non-blocker advice.
+					if (this.#hasTerminalTextAnswerWithoutQueuedWork()) {
+						this.#host.preserveAdvisorCard(card);
+						return null;
+					}
+					return card;
+				},
 				skipIdleFlush: true,
 			});
 		}
@@ -1735,20 +1736,24 @@ export class SessionAdvisors {
 	/**
 	 * Route one accepted advice note from `advisor` to the primary. Concern and
 	 * blocker interrupt the running agent through the steering channel; a plain nit
-	 * rides the non-interrupting YieldQueue aside during streaming. After a terminal
-	 * text answer with no queued work, a note below `advisor.continueSeverity` is
-	 * preserved as a visible advisor card, while one at or above it wakes the
-	 * primary for one continuation. After a deliberate user interrupt auto-resume is
-	 * suppressed while idle/unwinding (the note becomes a preserved card re-entering
-	 * on resume); a live-streaming turn is steered in directly. Never re-runs
-	 * admission — the note cleared the emission guard inside AdviseTool when it was
-	 * emitted, so a deferred flush replays the backlog without re-filtering.
+	 * and a concern reviewing an in-progress turn ride the non-interrupting aside
+	 * queue during streaming. After a terminal text answer with no queued work, a
+	 * note below `advisor.continueSeverity` is preserved as a visible advisor card,
+	 * while one at or above it wakes the primary for one continuation. After a
+	 * deliberate user interrupt auto-resume is suppressed while idle/unwinding;
+	 * a live-streaming turn is steered in directly. Never re-runs admission.
 	 */
-	#routeAdvice(advisor: ActiveAdvisor, note: string, severity?: AdvisorSeverity, turn?: number): void {
+	#routeAdvice(
+		advisor: ActiveAdvisor,
+		note: string,
+		severity: AdvisorSeverity | undefined,
+		inProgress: boolean,
+		turn?: number,
+	): void {
 		// The implicit single ("default") advisor stamps no source name, so its
 		// agent-facing `<advisory>` bytes stay identical to the pre-multi-advisor path.
 		const source = advisor.slug ? advisor.name : undefined;
-		// Inside a terminal-boundary callback (deferred flush + catch-up wait) the
+		// Inside a terminal-boundary callback (catch-up wait) the
 		// loop still reports streaming, so a delivered note would steer a fresh turn
 		// — waking the primary to act on advice produced against work that already
 		// finished, and N simultaneous notes would force N separate deliveries
@@ -1788,6 +1793,7 @@ export class SessionAdvisors {
 			aborting: this.#host.abortInProgress(),
 			terminalAnswerNoQueuedWork,
 			interruptImmuneTurnActive: this.#isAdvisorInterruptImmuneTurnActive(),
+			inProgress,
 		});
 		if (channel === "aside") {
 			this.#host.yieldQueue.enqueue("advisor", { note, severity, advisor: source });

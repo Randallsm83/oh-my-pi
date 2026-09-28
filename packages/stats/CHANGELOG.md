@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed tool-usage stats counting calls to mounted `xd://` tools (MCP servers, plugin tools, memory devices) as `write`; existing history is re-attributed on the next sync.
+
 ## [18.4.4] - 2026-09-29
 
 ### Added

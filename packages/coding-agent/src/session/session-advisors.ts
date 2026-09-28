@@ -523,10 +523,6 @@ export class SessionAdvisors {
 			this.#advisorPrimaryTurnsCompleted++;
 			for (const advisor of this.#advisors) {
 				if (advisor.runtime.disposed) continue;
-				// Only the terminal primary boundary owns the deferred flush. Continuing
-				// tool turns must keep partial-work critiques withheld. The flush never
-				// resets the per-update budget — no new advisor update starts here.
-				if (willContinue !== true) advisor.adviseTool.flushDeferredNotes();
 				try {
 					advisor.runtime.onTurnEnd(messages, { willContinue });
 				} catch (error) {
@@ -1065,7 +1061,7 @@ export class SessionAdvisors {
 			// accepted notes and acknowledges truthfully. No separate accept wrapper.
 			const emissionGuard = new AdvisorEmissionGuard({ budgetPerUpdate });
 			const adviseTool = new AdviseTool(
-				(note, severity) => this.#routeAdvice(advisorRef, note, severity),
+				(note, severity, inProgress) => this.#routeAdvice(advisorRef, note, severity, inProgress),
 				emissionGuard,
 			);
 
@@ -1332,10 +1328,8 @@ export class SessionAdvisors {
 				getModelIdentity: () => formatModelString(advisorRef.agent.state.model),
 				beginAdvisorUpdate: inProgress => {
 					advisorRef.recorder.beginTurn();
-					// Flushes the deferred backlog on the in-progress→completed
-					// transition (notes already cleared admission when reserved) and
-					// resets the guard's per-update budget for this prompt's live
-					// notes — both owned by the tool now.
+					// Resets the guard's per-update budget and records whether this
+					// update reviews an in-progress primary turn.
 					advisorRef.adviseTool.beginUpdate(inProgress);
 				},
 				onTurnError: (error, failedMessages, signal) =>
@@ -1411,22 +1405,31 @@ export class SessionAdvisors {
 		}
 
 		// One shared non-blocking aside channel for all advisors; the build callback
-		// aggregates every advisor's queued nits into one card (each entry already
+		// aggregates every advisor's queued notes into one card (each entry already
 		// carries its own `advisor` name).
 		if (this.#advisors.length > 0 && !this.#advisorYieldQueueUnsubscribe) {
 			this.#advisorYieldQueueUnsubscribe = this.#host.yieldQueue.register<AdvisorNote>("advisor", {
-				build: entries =>
-					entries.length === 0
-						? null
-						: ({
-								role: "custom",
-								customType: "advisor",
-								display: true,
-								attribution: "agent",
-								timestamp: Date.now(),
-								content: formatAdvisorBatchContent(entries),
-								details: { notes: entries } satisfies AdvisorMessageDetails,
-							} satisfies CustomMessage),
+				build: entries => {
+					if (entries.length === 0) return null;
+					const card: CustomMessage = {
+						role: "custom",
+						customType: "advisor",
+						display: true,
+						attribution: "agent",
+						timestamp: Date.now(),
+						content: formatAdvisorBatchContent(entries),
+						details: { notes: entries } satisfies AdvisorMessageDetails,
+					};
+					// Built lazily at injection. At the primary's stop boundary after a
+					// final text answer, injecting would wake it for an extra turn about
+					// work it already finished; keep the notes as a visible card instead,
+					// matching the route-time rule for late non-blocker advice.
+					if (this.#hasTerminalTextAnswerWithoutQueuedWork()) {
+						this.#host.preserveAdvisorCard(card);
+						return null;
+					}
+					return card;
+				},
 				skipIdleFlush: true,
 			});
 		}
@@ -1442,8 +1445,9 @@ export class SessionAdvisors {
 	 * visible advisor card, while a blocker wakes the primary to acknowledge work
 	 * it handed off incorrectly. After a deliberate user interrupt auto-resume is
 	 * suppressed while idle/unwinding (the note becomes a preserved card re-entering
-	 * on resume); a live-streaming turn is steered in directly. A plain nit rides
-	 * the non-interrupting YieldQueue aside during streaming. The emission guard
+	 * on resume); a live-streaming turn is steered in directly. A plain nit, and a
+	 * concern from a review of an in-progress primary turn, ride the
+	 * non-interrupting YieldQueue aside during streaming. The emission guard
 	 * has already accepted the note; rejected calls never enter this route and
 	 * receive their specific policy outcome from `AdviseTool`.
 	 */
@@ -1457,9 +1461,14 @@ export class SessionAdvisors {
 
 	/** Route an already-accepted advice note to the primary. Never re-runs
 	 *  admission — the note cleared the emission guard inside AdviseTool when it
-	 *  was emitted, so a deferred flush replays the backlog without
-	 *  re-filtering. */
-	#routeAdvice(advisor: ActiveAdvisor, note: string, severity?: AdvisorSeverity): void {
+	 *  was emitted. `inProgress` marks a note from a review of an in-progress
+	 *  primary turn: non-blockers then ride the aside queue to the next step. */
+	#routeAdvice(
+		advisor: ActiveAdvisor,
+		note: string,
+		severity: AdvisorSeverity | undefined,
+		inProgress: boolean,
+	): void {
 		// The implicit single ("default") advisor stamps no source name, so its
 		// agent-facing `<advisory>` bytes stay identical to the pre-multi-advisor path.
 		const source = advisor.slug ? advisor.name : undefined;
@@ -1477,6 +1486,7 @@ export class SessionAdvisors {
 			aborting: this.#host.abortInProgress(),
 			terminalAnswerNoQueuedWork,
 			interruptImmuneTurnActive: interrupting && this.#isAdvisorInterruptImmuneTurnActive(),
+			inProgress,
 		});
 		if (channel === "aside") {
 			this.#host.yieldQueue.enqueue("advisor", { note, severity, advisor: source });

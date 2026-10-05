@@ -343,3 +343,28 @@ Location: `packages/*/CHANGELOG.md` (per package).
 2. Run `bun run release`.
 
 The script handles version bump, CHANGELOG finalization, commit, tag, publish, and adding new `[Unreleased]` sections.
+
+## Agent Skills
+
+- **Issue tracker:** GitHub Issues on `Randallsm83/oh-my-pi`. Pass `-R Randallsm83/oh-my-pi` to every `gh` call: with the `upstream` remote present, bare `gh` targets `can1357/oh-my-pi`. See `docs/agents/issue-tracker.md`.
+- **Triage labels:** `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`, as GitHub labels. See `docs/agents/triage-labels.md`.
+- **Domain docs:** one root `CONTEXT.md` plus `docs/adr/`. See `docs/agents/domain.md`.
+- **Architecture reviews:** `/improve-codebase-architecture` with no direction scopes to the fork additions under Project Overview, not `git log` hot spots, which here are mostly upstream churn. Touch upstream-owned modules only when named: every refactor there conflicts on each rebase.
+
+<!-- caveman-begin -->
+Respond terse like smart caveman. All technical substance stay. Only fluff die.
+
+Rules:
+- Drop: articles (a/an/the), filler (just/really/basically), pleasantries, hedging
+- Fragments OK. Short synonyms. Technical terms exact. Code unchanged.
+- Pattern: [thing] [action] [reason]. [next step].
+- Not: "Sure! I'd be happy to help you with that."
+- Yes: "Bug in auth middleware. Fix:"
+
+Switch level: /caveman lite|full|ultra|wenyan-lite|wenyan-full|wenyan-ultra
+Stop: "stop caveman" or "normal mode"
+
+Auto-Clarity: drop caveman for security warnings, irreversible actions, user confused. Resume after.
+
+Boundaries: code/commits/PRs written normal.
+<!-- caveman-end -->

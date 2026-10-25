@@ -61,6 +61,7 @@ export interface BashExecutorOptions {
 	/**
 	 * Refuse git commands that discard or move shared work (`bash.gitGuard`),
 	 * enforced by the embedded shell's `git` builtin.
+	 * External user-shell execution is rejected while this guard is enabled.
 	 */
 	gitGuard?: boolean;
 	/**
@@ -559,10 +560,8 @@ async function executeUserShellPty(run: {
 /**
  * The deadline for a PTY run; `undefined` disables it.
  *
- * `interactive` means the caller took the session handle and is forwarding
- * keystrokes, so a human is driving the run and is its own deadline. This lives
- * in a named function because the interactive branch is reachable only through
- * a UI-focused `!` command, which no test of `executeBash` itself can set up.
+ * `interactive` means the caller requested a stdin writer and owns cancellation,
+ * so a human-driven `!` command does not inherit the agent tool's deadline.
  */
 export function resolvePtyTimeoutMs(requestedMs: number | undefined, interactive: boolean): number | undefined {
 	if (interactive || requestedMs === 0) return undefined;
@@ -576,6 +575,7 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 		options?.useUserShell === true ? resolveUserShellConfig(settings, baseShellConfig) : baseShellConfig;
 	const { shell, args, env: shellEnv, prefix } = shellConfig;
 	const bashShell = isBashShell(shell);
+	const runCdInPersistentShell = options?.useUserShell === true && !prefix && isPersistentShellCdCommand(command);
 	// `!` hotkey commands on zsh/fish run in a real PTY: interactive shell
 	// startup (zle, job control, gitstatus) needs a TTY, and tools only emit
 	// color when stdout is one. bash keeps the snapshot + embedded-shell path;
@@ -588,6 +588,15 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 		supportsAutoUserShell(shell) &&
 		$env.PI_NO_PTY !== "1" &&
 		!isPersistentShellCdCommand(command);
+	const useExternalUserShell =
+		options?.useUserShell === true && !bashShell && !isCmdShell(shell) && !runCdInPersistentShell;
+	// The git builtin only guards commands parsed by the embedded shell, not
+	// commands launched inside an external user shell (including a PTY).
+	if (options?.gitGuard && (usePty || useExternalUserShell)) {
+		throw new Error(
+			`bash.gitGuard cannot protect external user shell ${shell}. Disable bash.userShell or set shellPath to bash to keep git guard enabled.`,
+		);
+	}
 	const minimizer = buildMinimizerOptions(cfgShellMinimizer.get(settings));
 
 	const commandCwd = resolveShellCwd(options?.cwd);
@@ -615,7 +624,6 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 	]);
 	const colorOutput = cfgBashColor.get(settings);
 	const commandEnv = buildNonInteractiveEnv(preflight.env, Bun.env, process.platform, { color: colorOutput });
-	const runCdInPersistentShell = options?.useUserShell === true && !prefix && isPersistentShellCdCommand(command);
 	// The per-command env is applied as OVERRIDES on top of the parent process
 	// env, so it can add a variable but never remove one omp itself inherited: a
 	// NO_COLOR in omp's own environment would survive and silently defeat
@@ -629,10 +637,7 @@ export async function executeBash(command: string, options?: BashExecutorOptions
 		: preflight.command;
 	// Never wrap in cmd.exe: it is only the Windows no-bash fallback for spawn
 	// paths, and the embedded brush shell runs the POSIX line better directly.
-	const finalCommand =
-		options?.useUserShell === true && !bashShell && !isCmdShell(shell) && !runCdInPersistentShell
-			? buildUserShellCommand(shell, args, colorCommand)
-			: colorCommand;
+	const finalCommand = useExternalUserShell ? buildUserShellCommand(shell, args, colorCommand) : colorCommand;
 
 	// Create output sink for truncation and artifact handling
 	const graphics = new TerminalGraphicsDecoder();

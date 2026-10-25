@@ -275,7 +275,6 @@ export class AdviseTool implements AgentTool<typeof adviseSchema, AdviseDetails>
 		return this.#result(ADVISOR_ACK_SENT, args);
 	}
 
-
 	#result(text: string, args: AdviseParams): AgentToolResult<AdviseDetails> {
 		return {
 			content: [{ type: "text", text }],

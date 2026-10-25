@@ -1707,11 +1707,13 @@ export class SessionAdvisors {
 						content: formatAdvisorBatchContent(entries),
 						details: { notes: entries } satisfies AdvisorMessageDetails,
 					};
-					// Built lazily at injection. At the primary's stop boundary after a
-					// final text answer, injecting would wake it for an extra turn about
-					// work it already finished; keep the notes as a visible card instead,
-					// matching the route-time rule for late non-blocker advice.
-					if (this.#hasTerminalTextAnswerWithoutQueuedWork()) {
+					// Re-evaluate at injection: working turns (including pause_turn)
+					// consume asides normally; finished work uses the same threshold,
+					// continuation latch, and preservation gates as directly routed notes.
+					if (this.#terminalUnwindActive && this.#hasTerminalTextAnswerWithoutQueuedWork()) {
+						if (entries.some(note => this.#continuesFinishedRun(note.severity)) && this.#prepareAdvisorSteer()) {
+							return card;
+						}
 						this.#host.preserveAdvisorCard(card);
 						return null;
 					}
@@ -1864,6 +1866,25 @@ export class SessionAdvisors {
 		return channel === "steer";
 	}
 
+	/** Apply shared continuation gates and arm delivery state only for advice that will reach the primary. */
+	#prepareAdvisorSteer(): boolean {
+		// Plan mode stays user-driven; an idle ACP client may also refuse new turns.
+		const planModePreservesAdvice = this.#host.planModeState()?.enabled === true;
+		const cannotAutoTrigger =
+			!this.#host.agent.state.isStreaming &&
+			this.#host.clientBridge()?.deferAgentInitiatedTurns === true &&
+			!this.#host.allowAgentInitiatedTurns();
+		if (planModePreservesAdvice || cannotAutoTrigger) return false;
+		// A merely preserved card must never arm the post-interrupt cooldown.
+		this.#recordAdvisorInterruptDelivered();
+		// Queue-built terminal asides continue just like steers, without a second
+		// sendCustomMessage delivery or a review of the advisor-started continuation.
+		if (!this.#host.agent.state.isStreaming || this.#terminalUnwindActive) {
+			this.#advisorContinuation = { userMessage: lastPrimaryUserMessage(this.#host.agent.state.messages) };
+		}
+		return true;
+	}
+
 	/**
 	 * Deliver one advisor batch as a steer, or as a visible card when steering
 	 * is technically impossible. A steered batch only continues the run when the
@@ -1876,34 +1897,14 @@ export class SessionAdvisors {
 	 */
 	#deliverAdvisorBatch(notes: AdvisorNote[], content: string, steer: boolean): void {
 		const details = { notes } satisfies AdvisorMessageDetails;
-		if (steer) {
-			// Plan mode preserves would-be-steering advice as a visible card:
-			// only user-driven turns converge on ask/resolve.
-			const planModePreservesAdvice = this.#host.planModeState()?.enabled === true;
-			const cannotAutoTrigger =
-				!this.#host.agent.state.isStreaming &&
-				this.#host.clientBridge()?.deferAgentInitiatedTurns === true &&
-				!this.#host.allowAgentInitiatedTurns();
-			if (!planModePreservesAdvice && !cannotAutoTrigger) {
-				// Arm the post-interrupt immune window only now that a turn is actually
-				// being steered/triggered. A merely preserved card never interrupts, so
-				// arming earlier would downgrade the next `advisor.immuneTurns` worth of
-				// real concerns/blockers to skip-idle-flush asides (#5628 review).
-				this.#recordAdvisorInterruptDelivered();
-				// A steer into a run still working only redirects it; one delivered
-				// while idle or past a terminal boundary starts the continuation
-				// that must not schedule another review.
-				if (!this.#host.agent.state.isStreaming || this.#terminalUnwindActive) {
-					this.#advisorContinuation = { userMessage: lastPrimaryUserMessage(this.#host.agent.state.messages) };
-				}
-				void this.#host
-					.sendCustomMessage(
-						{ customType: "advisor", content, display: true, attribution: "agent", details },
-						{ deliverAs: "steer", triggerTurn: true },
-					)
-					.catch(err => logger.debug("advisor delivery failed", { err: String(err) }));
-				return;
-			}
+		if (steer && this.#prepareAdvisorSteer()) {
+			void this.#host
+				.sendCustomMessage(
+					{ customType: "advisor", content, display: true, attribution: "agent", details },
+					{ deliverAs: "steer", triggerTurn: true },
+				)
+				.catch(err => logger.debug("advisor delivery failed", { err: String(err) }));
+			return;
 		}
 		this.#host.preserveAdvisorCard({
 			role: "custom",

@@ -315,6 +315,86 @@ describe("executeBash", () => {
 		expect(fs.existsSync(marker)).toBe(false);
 	});
 
+	it("rejects guarded external user-shell commands before they execute", async () => {
+		cfgShellPath.set(Settings.instance, process.execPath);
+		vi.spyOn(Settings.prototype, "getShellConfig").mockReturnValue({
+			shell: process.execPath,
+			args: ["-e"],
+			env: { PATH: Bun.env.PATH ?? "", HOME: tempDir },
+			prefix: undefined,
+		});
+		const marker = path.join(tempDir, "user-shell-ran");
+		const command = `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran"); process.stdout.write("user-shell-ok");`;
+		const options = { cwd: tempDir, timeout: 5000, sessionKey: tempDir, useUserShell: true };
+
+		const unguarded = await executeBash(command, { ...options, gitGuard: false });
+		expect(unguarded.exitCode).toBe(0);
+		expect(unguarded.output).toBe("user-shell-ok");
+		expect(fs.readFileSync(marker, "utf8")).toBe("ran");
+		fs.unlinkSync(marker);
+
+		await expect(executeBash(command, { ...options, gitGuard: true })).rejects.toThrow(
+			/bash\.gitGuard.*bash\.userShell/,
+		);
+		expect(fs.existsSync(marker)).toBe(false);
+	});
+
+	it.skipIf(process.platform === "win32" || Bun.env.PI_NO_PTY === "1")(
+		"rejects guarded user-shell PTY commands before they execute",
+		async () => {
+			const zshPath = $which("zsh");
+			if (!zshPath) return;
+			cfgShellPath.set(Settings.instance, zshPath);
+			vi.spyOn(Settings.prototype, "getShellConfig").mockReturnValue({
+				shell: zshPath,
+				args: ["-f", "-c"],
+				env: { PATH: Bun.env.PATH ?? "", HOME: tempDir },
+				prefix: undefined,
+			});
+			const marker = path.join(tempDir, "user-shell-pty-ran");
+			const command = `[ -t 1 ] && printf 'user-shell-pty-ok'; printf ran > ${shellQuote(marker)}`;
+			const options = {
+				cwd: tempDir,
+				timeout: 5000,
+				useUserShell: true,
+				pty: { cols: 80, rows: 24, onChunk: () => {} },
+			};
+
+			const unguarded = await executeBash(command, { ...options, gitGuard: false });
+			expect(unguarded.exitCode).toBe(0);
+			expect(unguarded.output).toBe("user-shell-pty-ok");
+			expect(fs.readFileSync(marker, "utf8")).toBe("ran");
+			fs.unlinkSync(marker);
+
+			await expect(executeBash(command, { ...options, gitGuard: true })).rejects.toThrow(
+				/bash\.gitGuard.*bash\.userShell/,
+			);
+			expect(fs.existsSync(marker)).toBe(false);
+		},
+	);
+
+	it("keeps guarded non-bash user-shell cd commands embedded", async () => {
+		cfgShellPath.set(Settings.instance, process.execPath);
+		vi.spyOn(Settings.prototype, "getShellConfig").mockReturnValue({
+			shell: process.execPath,
+			args: ["-e"],
+			env: { PATH: Bun.env.PATH ?? "", HOME: tempDir },
+			prefix: undefined,
+		});
+		const childDir = path.join(tempDir, "child");
+		fs.mkdirSync(childDir);
+
+		const result = await executeBash("cd child", {
+			cwd: tempDir,
+			timeout: 5000,
+			sessionKey: tempDir,
+			gitGuard: true,
+			useUserShell: true,
+		});
+		expect(result.exitCode).toBe(0);
+		expect(result.workingDir).toBe(childDir);
+	});
+
 	it("runs non-bash shellPath commands through the configured shell", async () => {
 		if (process.platform === "win32") {
 			return;

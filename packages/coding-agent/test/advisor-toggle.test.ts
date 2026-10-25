@@ -1179,33 +1179,6 @@ describe("AgentSession advisor toggle", () => {
 		}
 	});
 
-	it("delivers an in-progress concern at the next tool step, but keeps it a card once the agent has answered", async () => {
-		expect(session.setAdvisorEnabled(true)).toBe(true);
-		const tool = session.getAdvisorAgent()?.state.tools.find(candidate => candidate.name === "advise");
-		if (!(tool instanceof advisorModule.AdviseTool)) throw new Error("Expected advise tool");
-		session.agent.state.isStreaming = true;
-		try {
-			tool.beginUpdate(true);
-			await tool.execute("mid-1", { note: "The fix belongs in the shared helper.", severity: "concern" });
-			// Mid-run: the concern rides into the next model request instead of waiting for the run to end.
-			const midRun = session.yieldQueue.drainLazy().map(thunk => thunk());
-			expect(JSON.stringify(midRun)).toContain("The fix belongs in the shared helper.");
-
-			// The agent has since given its final answer: injecting now would wake it for an extra turn.
-			session.agent.appendMessage(advisorMessage(0, Date.now()));
-			await tool.execute("mid-2", { note: "The retry path is untested.", severity: "concern" });
-			const afterAnswer = session.yieldQueue.drainLazy().map(thunk => thunk());
-			expect(afterAnswer.filter(message => message !== null)).toEqual([]);
-			expect(
-				session.agent.state.messages.some(
-					message => message.role === "custom" && JSON.stringify(message).includes("The retry path is untested."),
-				),
-			).toBe(true);
-		} finally {
-			session.agent.state.isStreaming = false;
-		}
-	});
-
 	it("propagates the resolved budget into the advisor model-visible system prompt", () => {
 		// Contract: SessionAdvisors must render the resolved budget into the
 		// prompt the advisor model actually receives. If the runtime stopped

@@ -171,7 +171,12 @@ export interface NonInteractiveEnvOptions {
 /** Builds the per-command environment for non-interactive child processes. */
 export function buildNonInteractiveEnv(
 	overrides?: Record<string, string>,
-	{ baseEnv = Bun.env, platform = process.platform, inheritLocale = false, color = false }: NonInteractiveEnvOptions = {},
+	{
+		baseEnv = Bun.env,
+		platform = process.platform,
+		inheritLocale = false,
+		color = false,
+	}: NonInteractiveEnvOptions = {},
 ): Record<string, string> {
 	// `PI_BASH_NO_CI` (and its legacy alias) opts out of the automatic `CI=true`
 	// injection. Mirrors the session-env gate in `procmgr.ts` so the opt-out

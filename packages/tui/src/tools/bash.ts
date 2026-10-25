@@ -13,6 +13,8 @@ import {
 	replaceTabs,
 	styleOutputLine,
 } from "../render/render-utils";
+import { sanitizeWithOptionalSixelPassthrough } from "../render/sixel";
+import { sanitizeTextKeepingSafeSgr } from "./terminal-output";
 import {
 	formatMinimizedMeta,
 	formatStyledTruncationWarning,
@@ -635,7 +637,7 @@ export function createShellRenderer<TArgs>(config: ShellRendererConfig<TArgs>) {
 					// double-print it alongside the styled warning line below.
 					const rawOutput =
 						options.shellTrace && presentation
-							? sanitizeText(presentation.output)
+							? sanitizeWithOptionalSixelPassthrough(presentation.output, sanitizeTextKeepingSafeSgr)
 							: (renderContext?.output ?? result.content?.find(c => c.type === "text")?.text ?? "");
 
 					const isPartial = options.isPartial === true;

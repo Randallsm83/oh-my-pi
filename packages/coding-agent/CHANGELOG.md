@@ -13,6 +13,8 @@
 
 ### Fixed
 
+- Applied advisor continuation severity and cooldown rules to notes queued at a completed-answer boundary.
+- Refused `bash.gitGuard` with external `bash.userShell` execution instead of silently bypassing protection; use the embedded shell or a Bash snapshot when the guard is enabled.
 - Published pane-local agent status to WezTerm, with static working indicators on Windows, and cleared it when OMP exits.
 - Preserved split escape sequences and visible-text limits in colored shell output.
 - Interactive PTY commands now identify themselves to agent-aware shell startup configuration.

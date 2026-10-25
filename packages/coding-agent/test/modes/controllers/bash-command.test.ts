@@ -644,7 +644,7 @@ describe("bash shortcut command", () => {
 
 		await new CommandController(ctx).handleBashCommand("seq 1 30");
 
-		const component = present.mock.calls[0]?.[0];
+		const component = present.mock.calls[0]?.[0]?.inner;
 		expect(component).toBeInstanceOf(BashExecutionComponent);
 		// Each output line is styled, so compare stripped whole lines: `line-1`
 		// is otherwise a substring of `line-10`..`line-19`, which sit inside the

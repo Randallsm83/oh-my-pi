@@ -1,0 +1,14 @@
+{
+	"syncCommit": "e124a802f5a97f658450d381344558e45a9838d2",
+	"files": {
+		"packages/coding-agent/src/secrets/obfuscator.ts": "ebb9bd625edb493772fa0b00c83891883163a3a2ee6ff9ea764d5bf741e73554",
+		"packages/coding-agent/src/secrets/patterns.ts": "c1ec5f0da774b4d4e30084c04ac9ab78f6729566be7d91d637c5a91ac90d4dcf",
+		"packages/coding-agent/src/secrets/placeholder-scan.ts": "76956fcb6bb417df5793362255a9e6c272e0d385fcfeff3da56439caf1975527",
+		"packages/coding-agent/src/secrets/placeholder.ts": "8168a35a82cf48b7471360a6f20b61bc1a28be1c666e18b8dbb6983a97b4df4d",
+		"packages/coding-agent/src/secrets/regex.ts": "29c425aea36b8990e20971e68e6d18e28100877d2cd1e4c5835dff63e9de2536",
+		"packages/coding-agent/src/secrets/registry-revision.ts": "32f186e67f4bcf502f5dbf9f13a5cf796b91f3ed18cf3de6e005cbe5a14fe099",
+		"packages/coding-agent/src/secrets/replacement.ts": "cd6e5a6aee46391614a1652b891f5922afb720bd820160149672c2c444d22aaa",
+		"packages/coding-agent/src/secrets/index.ts": "9729d21a823c40b222ff0d733b5308758e5e35384a7718ae884a85de434be1d8",
+		"packages/ai/src/providers/transform-messages.ts": "c929404bde28334f17ed2355d5a765a7049205e7217950803429fe43a92af218"
+	}
+}

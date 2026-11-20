@@ -21,6 +21,7 @@
 - User `!` commands accept keyboard input, repaint promptly, and remain open without the model tool deadline while interactive input is available.
 - Bash and eval output blocks inherit expansion state in live sessions, restored sessions, and transcript viewers.
 - Preserved SIXEL images in tool-result fallback output.
+- `git worktree add` in bash no longer fails with `command not found` for the omp executable when the shell is zsh on Windows.
 
 ## [19.0.0] - 2026-11-18
 

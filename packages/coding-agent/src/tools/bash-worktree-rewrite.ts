@@ -2,6 +2,8 @@ import { extractFlatShellCommandSegments, tokenizeShellSegments } from "./shell-
 
 const SHELL_EXPANSION = /[$`~*?[\]{}<>]/;
 const BARE_SAFE = /^[A-Za-z0-9_./:@%+=,-]+$/;
+// MSYS zsh cannot exec a backslash-separated path; forward slashes work in every Windows POSIX shell.
+const WINDOWS_ABSOLUTE = /^[A-Za-z]:\\/;
 
 function shellQuote(value: string): string {
 	return BARE_SAFE.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
@@ -57,7 +59,11 @@ function rewriteSegment(text: string, ompCmd: readonly string[]): string | undef
 	}
 	if (positionals.length < 1 || positionals.length > 2) return undefined;
 
-	const argv = [...ompCmd, "worktree", "add"];
+	const argv = [
+		...ompCmd.map(part => (WINDOWS_ABSOLUTE.test(part) ? part.replaceAll("\\", "/") : part)),
+		"worktree",
+		"add",
+	];
 	if (cwd) argv.push("-C", cwd);
 	if (branchFlag && branch) argv.push(branchFlag, branch);
 	if (detach) argv.push("--detach");

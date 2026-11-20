@@ -33,4 +33,10 @@ describe("rewriteGitWorktreeAdd", () => {
 			"bun '/opt/omp cli.ts' worktree add -- 'path with spaces'",
 		);
 	});
+
+	it("emits a Windows omp path with forward slashes so zsh can exec it", () => {
+		expect(rewriteGitWorktreeAdd("git worktree add ../wt", ["C:\\Users\\me\\.local\\bin\\omp.exe"])).toBe(
+			"C:/Users/me/.local/bin/omp.exe worktree add -- ../wt",
+		);
+	});
 });

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `bash.color` output losing its colors on the agent's bash tool card; it now shows the same styling as `!` commands
+
 ## [19.0.0] - 2026-11-18
 
 ### Breaking Changes

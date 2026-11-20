@@ -11,10 +11,8 @@ import {
 	formatToolWorkingDirectory,
 	previewWindowRows,
 	replaceTabs,
-	styleOutputLine,
 } from "../render/render-utils";
-import { sanitizeWithOptionalSixelPassthrough } from "../render/sixel";
-import { sanitizeTextKeepingSafeSgr } from "./terminal-output";
+import { prepareTranscriptOutput, styleTranscriptLine } from "./transcript-styling";
 import {
 	formatMinimizedMeta,
 	formatStyledTruncationWarning,
@@ -637,7 +635,7 @@ export function createShellRenderer<TArgs>(config: ShellRendererConfig<TArgs>) {
 					// double-print it alongside the styled warning line below.
 					const rawOutput =
 						options.shellTrace && presentation
-							? sanitizeWithOptionalSixelPassthrough(presentation.output, sanitizeTextKeepingSafeSgr)
+							? prepareTranscriptOutput(presentation.output)
 							: (renderContext?.output ?? result.content?.find(c => c.type === "text")?.text ?? "");
 
 					const isPartial = options.isPartial === true;
@@ -703,7 +701,7 @@ export function createShellRenderer<TArgs>(config: ShellRendererConfig<TArgs>) {
 							edge: "tail",
 							visual: true,
 							width: contentWidth,
-							styleLine: line => styleOutputLine(replaceTabs(line), uiTheme),
+							styleLine: line => styleTranscriptLine(replaceTabs(line), uiTheme),
 							uncapSixel: true,
 						},
 						uiTheme,

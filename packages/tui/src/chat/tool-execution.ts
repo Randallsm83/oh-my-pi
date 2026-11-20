@@ -57,7 +57,6 @@ import {
 	formatStatusIcon,
 	replaceTabs,
 	resolveImageOptions,
-	styleOutputLine,
 } from "../render/render-utils";
 import type { XdevMountedState } from "../tools/xdev";
 import { isFramedBlockComponent, markFramedBlockComponent, renderStatusLine, WidthAwareText } from "../render/index";
@@ -65,6 +64,7 @@ import { cachedPngConversion, convertImageToPngShared, imagePayloadKey } from ".
 import { FenceFigure } from "./fence-figure";
 import { SpotlightNotices } from "./spotlight";
 import { getSixelLineMask, sanitizeWithOptionalSixelPassthrough } from "../render/sixel";
+import { prepareTranscriptOutput, styleTranscriptLine } from "../tools/transcript-styling";
 import { renderDiff } from "../chrome/diff";
 import { type AnimationFrame, trimBlankEdges } from "../chrome/transcript-container";
 import { LateDiagnosticsMessageComponent } from "./late-diagnostics-message";
@@ -2275,7 +2275,7 @@ export class ToolExecutionComponent extends Container {
 		const lines = replaceTabs(output).split("\n");
 		const sixelLineMask = getSixelLineMask(lines);
 		return new Text(
-			lines.map((line, index) => (sixelLineMask[index] ? line : styleOutputLine(line, theme))).join("\n"),
+			lines.map((line, index) => (sixelLineMask[index] ? line : styleTranscriptLine(line, theme))).join("\n"),
 			0,
 			0,
 		);
@@ -2291,9 +2291,12 @@ export class ToolExecutionComponent extends Container {
 		const imageBlocks = this.#getAllImageBlocks();
 
 		let output = textBlocks
-			.map(c => {
-				return sanitizeWithOptionalSixelPassthrough(c.text || "", sanitizeText);
-			})
+			// Bash keeps transcript styling (`bash.color`); every other tool is plain text.
+			.map(c =>
+				this.#toolName === "bash"
+					? prepareTranscriptOutput(c.text || "")
+					: sanitizeWithOptionalSixelPassthrough(c.text || "", sanitizeText),
+			)
 			.join("\n");
 
 		if (imageBlocks.length > 0 && (!TERMINAL.imageProtocol || !this.#showImages)) {

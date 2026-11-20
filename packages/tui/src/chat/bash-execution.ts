@@ -12,17 +12,13 @@ import type { Terminal as XtermTerminalType } from "@oh-my-pi/pi-utils/vterm";
 import { theme } from "../theme/theme";
 import type { OutputArtifactError } from "../tools/streaming-output";
 import type { MinimizedMeta, TruncationMeta } from "../tools/output-meta";
-import { resolveImageOptions, styleOutputLine } from "../render/render-utils";
+import { resolveImageOptions } from "../render/render-utils";
 import { OutputPane } from "../render/output-pane";
 import { PtyKeyboard, type PtyKeyboardOptions } from "./pty-keyboard";
 import { normalizeInputForPty } from "../tools/bash-interactive";
-import {
-	loadXtermTerminal,
-	readTerminalRows,
-	sanitizeTextKeepingSafeSgr,
-	styleTerminalRow,
-} from "../tools/terminal-output";
-import { getSixelLineMask, isSixelPassthroughEnabled, sanitizeWithOptionalSixelPassthrough } from "../render/sixel";
+import { loadXtermTerminal, readTerminalRows, styleTerminalRow } from "../tools/terminal-output";
+import { prepareTranscriptOutput, styleTranscriptLine } from "../tools/transcript-styling";
+import { getSixelLineMask, isSixelPassthroughEnabled } from "../render/sixel";
 import {
 	buildExecutionFrame,
 	buildStatusFooter,
@@ -509,13 +505,9 @@ export class BashExecutionComponent extends Container {
 		}
 	}
 
-	/**
-	 * PTY replay rows arrive pre-styled (safe SGR + reset). Plain lines render
-	 * their own retained colors over the muted base rather than being repainted
-	 * flat, so `bash.color` output keeps eza/git/ls palettes in the transcript.
-	 */
+	/** PTY replay rows arrive pre-styled (safe SGR + reset); captured lines keep transcript styling over muted. */
 	#styleDisplayLine(line: string): string {
-		return this.#ptyMode ? line : styleOutputLine(line, theme, "muted");
+		return this.#ptyMode ? line : styleTranscriptLine(line, theme, "muted");
 	}
 
 	#clampLinesPreservingSixel(lines: string[]): string[] {
@@ -528,7 +520,7 @@ export class BashExecutionComponent extends Container {
 	}
 
 	#setOutput(output: string): void {
-		const clean = sanitizeWithOptionalSixelPassthrough(output, sanitizeTextKeepingSafeSgr);
+		const clean = prepareTranscriptOutput(output);
 		this.#outputLines = clean ? this.#clampLinesPreservingSixel(clean.split("\n")) : [];
 		this.#outputVersion++;
 	}

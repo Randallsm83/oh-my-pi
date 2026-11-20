@@ -96,10 +96,12 @@ interface DefinitionBase {
 	 */
 	credential?: true;
 	/**
-	 * Array entries may be objects scoping values to working-directory prefixes
-	 * (`{ path(s)/pathPrefix(es), values | items | <valuesKey> }`, see `config/settings.ts`);
-	 * `valuesKey` names the domain-specific alias for the values list (e.g. `models`, `patterns`),
-	 * and `itemType` selects whether unscoped/nested entries are strings (default) or rule objects.
+	 * Array entries may scope values to working-directory prefixes via
+	 * `path(s)` / `pathPrefix(es)` and/or `excludePathPrefixes` (string or string[]).
+	 * Exclusions veto matches; exclusion-only entries apply everywhere else. Entries without
+	 * either kind of prefix are ignored. `values`, `items`, and the domain-specific `valuesKey`
+	 * (e.g. `models`, `patterns`) name the values lists (see `config/settings.ts`), and `itemType`
+	 * selects whether unscoped/nested entries are strings (default) or rule objects.
 	 */
 	pathScoped?: { valuesKey: string; itemType?: "string" | "object" };
 	/**

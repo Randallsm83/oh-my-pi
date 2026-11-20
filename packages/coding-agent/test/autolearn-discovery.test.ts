@@ -4,16 +4,20 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { getManagedSkillsDir } from "@oh-my-pi/pi-coding-agent/autolearn/managed-skills";
 import { disableUserSource, enableUserSource } from "@oh-my-pi/pi-coding-agent/capability";
+import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
+import { AGENT_PLUGIN_MANIFEST_SCHEMA } from "@oh-my-pi/pi-coding-agent/discovery/agent-plugin-format";
 import "@oh-my-pi/pi-coding-agent/discovery";
 import { loadSkills } from "@oh-my-pi/pi-coding-agent/extensibility/skills";
-import { removeWithRetries } from "@oh-my-pi/pi-utils";
+import { cfgSkills } from "@oh-my-pi/pi-coding-agent/extensibility/settings";
+import { removeWithRetries, Snowflake } from "@oh-my-pi/pi-utils";
 import { getAgentDir, setAgentDir } from "@oh-my-pi/pi-utils/dirs";
 import { restoreEnvValue } from "./helpers/settings-test-state";
+import { YAML } from "bun";
 
 async function writeSkill(dir: string, name: string, description: string): Promise<void> {
 	const file = path.join(dir, name, "SKILL.md");
 	await fs.mkdir(path.dirname(file), { recursive: true });
-	await fs.writeFile(file, ["---", `description: ${description}`, "---", "", `# ${name}`].join("\n"));
+	await fs.writeFile(file, ["---", `name: ${name}`, `description: ${description}`, "---", "", `# ${name}`].join("\n"));
 }
 
 describe("managed-skills discovery", () => {
@@ -55,6 +59,82 @@ describe("managed-skills discovery", () => {
 		const foo = skills.find(s => s.name === "foo");
 		expect(foo).toBeDefined();
 		expect(foo?.source).toBe("omp-managed:user");
+	});
+
+	it("removes authored, custom, managed and plugin app skills after F-to-C reload and restores them on F", async () => {
+		const customDir = path.join(tempHome, "custom-skills");
+		const pluginDir = path.join(tempHome, "plugin");
+		await Bun.write(
+			path.join(pluginDir, "plugin.json"),
+			JSON.stringify({ $schema: AGENT_PLUGIN_MANIFEST_SCHEMA, name: "scoped-plugin" }),
+		);
+		for (const [dir, source] of [
+			[authoredDir, "authored"],
+			[customDir, "custom"],
+			[managedDir, "managed"],
+			[path.join(pluginDir, "skills"), "plugin"],
+		] as const) {
+			await writeSkill(dir, `comfy-${source}`, `App skill from ${source}.`);
+			await writeSkill(dir, `general-${source}`, `General skill from ${source}.`);
+		}
+		const overlayPath = path.join(tempHome, "scope.yml");
+		await Bun.write(
+			overlayPath,
+			YAML.stringify({
+				skills: {
+					enableCodexUser: false,
+					enableClaudeUser: false,
+					enableClaudeProject: false,
+					enablePiUser: true,
+					enablePiProject: false,
+					enableAgentsUser: false,
+					enableAgentsProject: false,
+					customDirectories: [customDir],
+					ignoredSkills: [{ excludePathPrefixes: ["F:/"], values: ["comfy-*"] }],
+				},
+			}),
+		);
+		const id = Snowflake.next();
+		const fCwd = path.resolve(`F:/scope-${id}`);
+		const cCwd = path.resolve(`C:/scope-${id}`);
+		const settings = await Settings.loadIsolated({
+			cwd: fCwd,
+			agentDir: getAgentDir(),
+			inMemory: true,
+			configFiles: [overlayPath],
+		});
+		const loadNames = async (scope: Settings) => {
+			const { skills } = await loadSkills({
+				...cfgSkills.get(scope),
+				cwd: scope.getCwd(),
+				extensionRoots: {
+					explicit: [pluginDir],
+					mode: "explicit-only",
+					configured: [],
+					configuredLevel: "user",
+				},
+			});
+			return skills.map(skill => skill.name).sort();
+		};
+		const allSkills = [
+			"comfy-authored",
+			"comfy-custom",
+			"comfy-managed",
+			"comfy-plugin",
+			"general-authored",
+			"general-custom",
+			"general-managed",
+			"general-plugin",
+		];
+		const generalSkills = ["general-authored", "general-custom", "general-managed", "general-plugin"];
+
+		expect(await loadNames(settings)).toEqual(allSkills);
+		expect(await loadNames(await settings.cloneForCwd(cCwd))).toEqual(generalSkills);
+		expect(await loadNames(settings)).toEqual(allSkills);
+		await settings.reloadForCwd(cCwd);
+		expect(await loadNames(settings)).toEqual(generalSkills);
+		await settings.reloadForCwd(fCwd);
+		expect(await loadNames(settings)).toEqual(allSkills);
 	});
 
 	it("lets an authored skill win a name collision and drops the managed one", async () => {

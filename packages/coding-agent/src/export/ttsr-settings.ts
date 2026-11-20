@@ -120,6 +120,7 @@ export const cfgTtsrDisabledRules = register({
 	id: "ttsr.disabledRules",
 	type: "array",
 	default: [] as string[],
+	pathScoped: { valuesKey: "rules" },
 	ui: {
 		tab: "context",
 		group: "Rules (TTSR)",

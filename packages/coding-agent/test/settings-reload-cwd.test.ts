@@ -131,6 +131,32 @@ describe("Settings.reloadForCwd", () => {
 		expect(cfgCompactionEnabled.get(settings)).toBe(false);
 	});
 
+	it("exclusions veto positive prefixes while negative-only entries follow cwd", async () => {
+		const root = path.join(os.tmpdir(), `negative-scope-${Snowflake.next()}`);
+		const allowed = path.join(root, "allowed");
+		const excluded = path.join(allowed, "excluded");
+		const outside = path.join(root, "outside");
+		const settings = Settings.isolated({
+			enabledModels: [
+				"unconditional",
+				{ pathPrefixes: [allowed], models: ["positive"] },
+				{ path: allowed, excludePathPrefixes: excluded, items: ["both"] },
+				{ excludePathPrefixes: [excluded], values: ["negative"] },
+				{ models: ["missing-prefix"] },
+				{ pathPrefixes: [], excludePathPrefixes: [], values: ["empty-prefixes"] },
+			],
+		});
+
+		await settings.reloadForCwd(allowed);
+		expect(cfgEnabledModels.get(settings)).toEqual(["unconditional", "positive", "both", "negative"]);
+		await settings.reloadForCwd(excluded);
+		expect(cfgEnabledModels.get(settings)).toEqual(["unconditional", "positive"]);
+		await settings.reloadForCwd(outside);
+		expect(cfgEnabledModels.get(settings)).toEqual(["unconditional", "negative"]);
+		await settings.reloadForCwd(`${excluded}-sibling`);
+		expect(cfgEnabledModels.get(settings)).toEqual(["unconditional", "positive", "both", "negative"]);
+	});
+
 	it("is a no-op when the target directory is already the active scope", async () => {
 		const projectA = path.resolve("/tmp", `reload-noop-${Snowflake.next()}`);
 		const settings = Settings.isolated({

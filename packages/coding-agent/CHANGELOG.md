@@ -6,6 +6,8 @@
 
 - Added `bash.userShell` to run model-issued shell commands with the configured user shell, aliases, and functions.
 - Added `bash.color` to preserve command colors in shell output.
+- Added `excludePathPrefixes` to path-scoped arrays, including `skills.ignoredSkills` and `ttsr.disabledRules`, so skill and rule exclusions follow working-directory changes without launcher-specific configuration.
+  Existing sessions must be relaunched into the rebuilt binary before reading the new scoped skill/rule arrays; older in-process workers do not support these settings.
 
 ### Changed
 

@@ -672,8 +672,12 @@ function resolvePathScopedArray(setting: AnySetting, value: unknown, cwd: string
 		}
 		if (!isRecord(entry)) continue;
 
+		const excludedPrefixes =
+			entry.excludePathPrefixes === undefined ? undefined : stringArrayFromUnknown(entry.excludePathPrefixes);
+		if (excludedPrefixes?.some(prefix => pathMatchesPrefix(cwd, prefix))) continue;
 		const prefixes = pathScopePrefixes(entry);
-		if (prefixes.length === 0 || !prefixes.some(prefix => pathMatchesPrefix(cwd, prefix))) continue;
+		if (prefixes.length === 0 && !excludedPrefixes?.length) continue;
+		if (prefixes.length > 0 && !prefixes.some(prefix => pathMatchesPrefix(cwd, prefix))) continue;
 
 		resolved.push(
 			...stringArrayFromUnknown(entry.values),

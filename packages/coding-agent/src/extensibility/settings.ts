@@ -72,6 +72,7 @@ export const cfgSkillsIgnoredSkills = register({
 	id: "skills.ignoredSkills",
 	type: "array",
 	default: EMPTY_STRING_ARRAY,
+	pathScoped: { valuesKey: "skills" },
 });
 
 export const cfgSkillsManualSkills = register({

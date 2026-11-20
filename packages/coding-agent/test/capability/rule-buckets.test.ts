@@ -1,7 +1,12 @@
 import { describe, expect, it } from "bun:test";
+import { YAML } from "bun";
+import * as path from "node:path";
 import { BUILTIN_DEFAULTS_PROVIDER_ID, type Rule } from "@oh-my-pi/pi-coding-agent/capability/rule";
 import { bucketRules } from "@oh-my-pi/pi-coding-agent/capability/rule-buckets";
+import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { TtsrManager } from "@oh-my-pi/pi-coding-agent/export/ttsr";
+import { cfgTtsrDisabledRules } from "@oh-my-pi/pi-coding-agent/export/ttsr-settings";
+import { Snowflake, TempDir } from "@oh-my-pi/pi-utils";
 
 function source(provider: string): Rule["_source"] {
 	return { provider, providerName: provider, path: "/tmp/rule.md", level: "user" };
@@ -135,6 +140,54 @@ describe("bucketRules", () => {
 		expect(rulebookRules).toHaveLength(0);
 		expect(mgr.hasRules()).toBe(false);
 		expect(mgr.checkDelta("contains FORBIDDEN token", { source: "text" })).toHaveLength(0);
+	});
+
+	it("drops app rules from every bucket on F-to-C reload and restores them on C-to-F", async () => {
+		using tempDir = TempDir.createSync("scoped-rules-");
+		const rules = [
+			makeRule({ name: "comfy-ttsr", condition: ["COMFY"] }),
+			makeRule({ name: "general-ttsr", condition: ["GENERAL"] }),
+			makeRule({ name: "comfy-always", alwaysApply: true }),
+			makeRule({ name: "general-always", alwaysApply: true }),
+			makeRule({ name: "comfy-book", description: "App rule" }),
+			makeRule({ name: "general-book", description: "General rule" }),
+		];
+		const id = Snowflake.next();
+		const fCwd = `F:/scope-${id}`;
+		const cCwd = `C:/scope-${id}`;
+		const overlayPath = path.resolve(tempDir.join("scope.yml"));
+		await Bun.write(
+			overlayPath,
+			YAML.stringify({
+				ttsr: {
+					disabledRules: [{ excludePathPrefixes: ["F:/"], rules: ["comfy-ttsr", "comfy-always", "comfy-book"] }],
+				},
+			}),
+		);
+		const settings = await Settings.loadIsolated({
+			cwd: fCwd,
+			agentDir: path.resolve(tempDir.join("agent")),
+			inMemory: true,
+			configFiles: [overlayPath],
+		});
+		const manager = new TtsrManager();
+
+		for (const cwd of [fCwd, cCwd, fCwd]) {
+			await settings.reloadForCwd(cwd);
+			const buckets = bucketRules(rules, manager, {
+				disabledRules: cfgTtsrDisabledRules.get(settings),
+				replaceTtsrRules: true,
+			});
+			expect(manager.getRules().map(rule => rule.name)).toEqual(
+				cwd === fCwd ? ["comfy-ttsr", "general-ttsr"] : ["general-ttsr"],
+			);
+			expect(buckets.alwaysApplyRules.map(rule => rule.name)).toEqual(
+				cwd === fCwd ? ["comfy-always", "general-always"] : ["general-always"],
+			);
+			expect(buckets.rulebookRules.map(rule => rule.name)).toEqual(
+				cwd === fCwd ? ["comfy-book", "general-book"] : ["general-book"],
+			);
+		}
 	});
 
 	it("disabledRules trims entries and ignores blanks", () => {

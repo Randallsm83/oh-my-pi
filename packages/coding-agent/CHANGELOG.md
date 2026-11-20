@@ -12,6 +12,7 @@
 ### Changed
 
 - Advisor notes raised while the agent is mid-run now reach it at its next tool step instead of being held until the run finishes; non-blockers still never interrupt.
+- Advisors may now raise a `concern` while the agent is mid-turn when it would change the agent's next steps; it reaches the agent at its next tool step without interrupting.
 
 ### Fixed
 
@@ -24,6 +25,7 @@
 - A running user `!` command now owns the keyboard: Esc, pastes, and shortcuts such as Ctrl+T/Ctrl+R/Ctrl+O reach the program instead of omp, Ctrl+] cancels the run, and the keyboard returns to the command after a dialog closes.
 - Pasting into a user `!` command that did not request bracketed paste (such as a `sudo` password prompt) no longer sends stray `ESC[200~` markers.
 - Bash and eval output blocks inherit expansion state in live sessions, restored sessions, and transcript viewers.
+- Advisor notes queued during a `pause_turn` continuation now reach the agent in that continuation instead of appearing as a card after the run.
 - `git worktree add` in bash no longer fails with `command not found` for the omp executable when the shell is zsh on Windows.
 
 ## [19.0.0] - 2026-11-18

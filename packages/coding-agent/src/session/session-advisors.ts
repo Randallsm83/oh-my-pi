@@ -374,6 +374,8 @@ interface ActiveAdvisor {
 	 * own budget. Reset with {@link providerWaitRetries}.
 	 */
 	credentialSwitches: { provider: string; count: number } | undefined;
+	/** Whether the advisor's current update reviews an in-progress primary turn; read when routing its advisories. */
+	reviewingInProgressTurn: boolean;
 	signature: string;
 }
 /** First index whose provider usage may anchor the advisor's context estimate. */
@@ -632,9 +634,8 @@ export class SessionAdvisors {
 	/**
 	 * True while a terminal-boundary {@link onPrimaryTurnEnd} callback runs
 	 * (deferred flush + catch-up wait). The agent loop still reports
-	 * `isStreaming` during this window; #routeAdvice uses the flag to preserve
-	 * non-blocker notes as cards instead of steering a fresh turn against
-	 * completed work.
+	 * `isStreaming` during this window; #routeAdvice buffers notes so the merged
+	 * delivery applies the terminal continuation threshold once.
 	 */
 	#advisorTerminalBoundaryOpen = false;
 	/**
@@ -682,13 +683,22 @@ export class SessionAdvisors {
 		// Delivery state follows primary boundaries even when review cadence skips a callback.
 		this.#advisorPrimaryWillContinue = willContinue === true;
 		this.#advisorPrimaryTurnsCompleted++;
-		// Marks the terminal-boundary window (catch-up wait) for
+		// Marks the terminal-boundary window (flush + catch-up wait) for
 		// #routeAdvice: the loop still reports isStreaming here, but the turn IS
-		// final, so non-blocker notes must preserve instead of steering a fresh
-		// turn against completed work.
+		// final, so the merged delivery must use the terminal continuation policy.
 		this.#advisorTerminalBoundaryOpen = !this.#advisorPrimaryWillContinue;
 		try {
 			this.#retuneAutoThinkingAdvisors();
+			if (!this.#advisorPrimaryWillContinue) {
+				// Flush notes deferred during tool-loop steps at every terminal boundary.
+				// Delivery never pauses: advice already produced against work the
+				// reviewers saw still reaches the primary during an advisor continuation.
+				for (const advisor of this.#advisors) {
+					advisor.adviseTool.flushDeferredNotes();
+					// The run is over: later advisories no longer review an in-progress turn.
+					advisor.reviewingInProgressTurn = false;
+				}
+			}
 			// A boundary of a continuation the advisor itself started is captured but
 			// never schedules a review: the next genuinely started boundary reviews it.
 			// The exception is the terminal boundary owed by an advisor whose review
@@ -1114,6 +1124,7 @@ export class SessionAdvisors {
 			a.resetToolState?.();
 			a.eligibleUpdates = 0;
 			a.reviewOwed = false;
+			a.reviewingInProgressTurn = false;
 			this.#attachAdvisorRecorderFeed(a);
 		}
 		this.#advisorPrimaryTurnsCompleted = 0;
@@ -1366,7 +1377,7 @@ export class SessionAdvisors {
 			// accepted notes and acknowledges truthfully. No separate accept wrapper.
 			const emissionGuard = new AdvisorEmissionGuard({ budgetPerUpdate });
 			const adviseTool = new AdviseTool(
-				(note, severity, inProgress, turn) => this.#routeAdvice(advisorRef, note, severity, inProgress, turn),
+				(note, severity, turn) => this.#routeAdvice(advisorRef, note, severity, turn),
 				emissionGuard,
 			);
 
@@ -1654,14 +1665,13 @@ export class SessionAdvisors {
 				getModelIdentity: () => formatModelString(advisorRef.agent.state.model),
 				beginAdvisorUpdate: inProgress => {
 					advisorRef.recorder.beginTurn();
-					// Resets the guard's per-update budget and records whether this
-					// update reviews an in-progress primary turn. A queued WIP review
-					// may start after the terminal boundary; do not re-arm in-progress
-					// routing then.
-					advisorRef.adviseTool.beginUpdate(
-						inProgress && this.#advisorPrimaryWillContinue,
-						advisorRef.pendingCoveredTurn,
-					);
+					// Mid-run advice is delivered at the agent's next tool step rather
+					// than deferred to the end of the run: the tool never defers (its
+					// backlog stays empty), and routing reads the in-progress flag here.
+					// A queued WIP review may start after a terminal boundary; do not
+					// re-arm in-progress routing.
+					advisorRef.reviewingInProgressTurn = inProgress && this.#advisorPrimaryWillContinue;
+					advisorRef.adviseTool.beginUpdate(false, advisorRef.pendingCoveredTurn);
 				},
 				onTurnError: (error, failedMessages, signal) =>
 					this.#recoverAdvisorTurn(advisorRef, error, failedMessages, signal),
@@ -1738,6 +1748,7 @@ export class SessionAdvisors {
 				retryFallbackPendingSuccess: false,
 				providerWaitRetries: 0,
 				credentialSwitches: undefined,
+				reviewingInProgressTurn: false,
 				signature,
 			};
 			this.#refreshAdvisorProviderIdentity(advisorRef);
@@ -1750,7 +1761,7 @@ export class SessionAdvisors {
 		}
 
 		// One shared non-blocking aside channel for all advisors; the build callback
-		// aggregates every advisor's queued notes into one card (each entry already
+		// aggregates every advisor's queued nits into one card (each entry already
 		// carries its own `advisor` name).
 		if (this.#advisors.length > 0 && !this.#advisorYieldQueueUnsubscribe) {
 			this.#advisorYieldQueueUnsubscribe = this.#host.yieldQueue.register<AdvisorNote>("advisor", {
@@ -1803,17 +1814,11 @@ export class SessionAdvisors {
 	 * deliberate user interrupt auto-resume is suppressed while idle/unwinding;
 	 * a live-streaming turn is steered in directly. Never re-runs admission.
 	 */
-	#routeAdvice(
-		advisor: ActiveAdvisor,
-		note: string,
-		severity: AdvisorSeverity | undefined,
-		inProgress: boolean,
-		turn?: number,
-	): void {
+	#routeAdvice(advisor: ActiveAdvisor, note: string, severity?: AdvisorSeverity, turn?: number): void {
 		// The implicit single ("default") advisor stamps no source name, so its
 		// agent-facing `<advisory>` bytes stay identical to the pre-multi-advisor path.
 		const source = advisor.slug ? advisor.name : undefined;
-		// Inside a terminal-boundary callback (catch-up wait) the
+		// Inside a terminal-boundary callback (deferred flush + catch-up wait) the
 		// loop still reports streaming, so a delivered note would steer a fresh turn
 		// — waking the primary to act on advice produced against work that already
 		// finished, and N simultaneous notes would force N separate deliveries
@@ -1858,7 +1863,7 @@ export class SessionAdvisors {
 			aborting: this.#host.abortInProgress(),
 			terminalAnswerNoQueuedWork,
 			interruptImmuneTurnActive: this.#isAdvisorInterruptImmuneTurnActive(),
-			inProgress,
+			inProgress: advisor.reviewingInProgressTurn,
 		});
 		if (channel === "aside") {
 			this.#host.yieldQueue.enqueue("advisor", { note, severity, advisor: source });

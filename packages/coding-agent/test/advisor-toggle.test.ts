@@ -1166,6 +1166,44 @@ describe("AgentSession advisor toggle", () => {
 			// failed batch stays requeued (the quota latch makes yielded true).
 			await advisorYielded.promise;
 			unsubscribe();
+
+			const adviseTool = advisorAgent.state.tools.find(tool => tool.name === "advise");
+			if (!(adviseTool instanceof advisorModule.AdviseTool)) throw new Error("Expected advisor advise tool");
+			adviseTool.beginUpdate(true);
+			const deferred = await adviseTool.execute("deferred-before-quota", {
+				note: "The final result still needs a regression test.",
+				severity: "nit",
+			});
+			if (deferred.content.length === 0) throw new Error("Expected the advise tool to acknowledge the call");
+			// Behavior, not wording: a note deferred behind an in-progress turn
+			// holds only a reservation — it must stay out of the primary
+			// transcript until the terminal-boundary flush below releases it.
+			expect(
+				quotaSession.messages.some(message =>
+					JSON.stringify(message).includes("The final result still needs a regression test."),
+				),
+			).toBe(false);
+
+			// The quota latch prevents another advisor dispatch. The tool boundary
+			// must keep the note out of the continuing model request; terminal
+			// completion may then release it into the primary transcript.
+			await quotaSession.prompt("Complete another primary turn");
+			await quotaSession.waitForIdle();
+			const continuingCall = mock.calls[2];
+			if (!continuingCall) throw new Error("Expected primary continuation call");
+			expect(
+				continuingCall.context.messages.some(message =>
+					JSON.stringify(message).includes("The final result still needs a regression test."),
+				),
+			).toBe(false);
+			expect(
+				quotaSession.messages.some(
+					message =>
+						message.role === "custom" &&
+						typeof message.content === "string" &&
+						message.content.includes("The final result still needs a regression test."),
+				),
+			).toBe(true);
 		} finally {
 			await quotaSession.dispose();
 			vi.restoreAllMocks();
@@ -1203,7 +1241,7 @@ describe("AgentSession advisor toggle", () => {
 					note: `${prefix} note ${i}`,
 					severity: "concern",
 				});
-				expect(JSON.stringify(result.content)).toContain("Delivered.");
+				expect(JSON.stringify(result.content)).toContain("Queued for the end of the turn");
 			}
 			const rejected = await tool.execute(`${prefix}-${budget + 1}`, {
 				note: `${prefix} note ${budget + 1}`,

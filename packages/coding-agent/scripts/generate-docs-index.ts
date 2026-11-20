@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { Glob } from "bun";
+import { isCorpusDoc } from "../src/internal-urls/docs-index";
 
 const packageDir = path.resolve(import.meta.dir, "..");
 const docsDir = path.resolve(packageDir, "../../docs");
@@ -25,7 +26,8 @@ export async function buildDocsIndexPayload(): Promise<DocsIndexPayload> {
 	const glob = new Glob("**/*.md");
 	const files: string[] = [];
 	for await (const relativePath of glob.scan(docsDir)) {
-		files.push(relativePath.split(path.sep).join("/"));
+		const normalized = relativePath.split(path.sep).join("/");
+		if (isCorpusDoc(normalized)) files.push(normalized);
 	}
 	files.sort();
 

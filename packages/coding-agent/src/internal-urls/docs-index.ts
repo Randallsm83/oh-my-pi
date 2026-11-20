@@ -28,6 +28,14 @@ const DOCS_DIR = path.resolve(import.meta.dir, "../../../../docs");
 
 const gunzipAsync = promisify(gunzip);
 
+/** Dev-only `docs/` subtrees (agent-skill config, ADRs) that never ship in the `omp://` corpus. */
+const DEV_ONLY_DOC_DIRS = ["agents/", "adr/"];
+
+/** Whether a `docs/`-relative, `/`-separated path belongs in the shipped `omp://` corpus. */
+export function isCorpusDoc(relativePath: string): boolean {
+	return !DEV_ONLY_DOC_DIRS.some(dir => relativePath.startsWith(dir));
+}
+
 export interface DocsIndex {
 	/** Sorted documentation file names, relative to `docs/`. */
 	readonly filenames: readonly string[];
@@ -77,6 +85,7 @@ function readDocsFromDisk(): DocsIndex | null {
 	try {
 		for (const relativePath of new Glob("**/*.md").scanSync(docsDir)) {
 			const normalized = relativePath.split(path.sep).join("/");
+			if (!isCorpusDoc(normalized)) continue;
 			filenames.push(normalized);
 			bodies[normalized] = readFileSync(path.join(docsDir, relativePath), "utf8");
 		}

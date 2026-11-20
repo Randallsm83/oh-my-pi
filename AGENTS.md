@@ -1,350 +1,339 @@
-# Development Rules
+# Repository Guidelines
 
-## Default Context
+## Project Overview
 
-This repo contains multiple packages, but **`packages/coding-agent/`** is the primary focus. Unless otherwise specified, assume work refers to this package.
+- **omp** is a terminal coding agent: a CLI/TUI that drives LLMs through tool calls, plus an SDK, RPC/ACP servers, and a local stats dashboard. It is a Bun + TypeScript monorepo backed by a Rust N-API addon.
+- **Primary focus: `packages/coding-agent/`.** Assume work targets it unless told otherwise. When the user says "the agent" or asks "why is agent doing X", they mean this package's code, not you.
+- **This checkout is a personal fork.** `origin` = `Randallsm83/oh-my-pi`, `upstream` = `can1357/oh-my-pi`. The fork's commits sit rebased on an upstream release tag. Pre-rebase states are kept in `backup/pre-rebase-*` branches. Fork additions:
+  - `bash.userShell` runs tool commands in the user's login shell. Code: `src/exec/settings.ts`, `src/tools/bash.ts`.
+  - `bash.color` keeps command colors. Code: `src/exec/non-interactive-env.ts`, `src/exec/bash-executor.ts`, pi-tui `streaming-output.ts` and `terminal-output.ts`.
+  - The WezTerm `OMP_TITLE` user var, and `OMP_AGENT_SHELL=1` exported in PTY shells.
+  - Keyboard input for user `!` commands.
+  - Advisor notes delivered mid-run.
+  - Recovery of `xd://` device calls, and stats attribution for them.
 
-**Terminology**: When the user says "agent" or asks "why is agent doing X", they mean the **coding-agent package implementation**, not you (the assistant). The coding-agent is a CLI tool — questions about its behavior refer to code in `packages/coding-agent/`, not your current session.
+## Architecture & Data Flow
 
-### Package Structure
+Package layering, from bottom to top (every package ships raw `src/*.ts`; none has a build step):
 
-|Package|Description|
-|---|---|
-|`packages/ai`|Multi-provider LLM client with streaming support|
-|`packages/catalog`|Model catalog: bundled models.json, provider descriptors, model identity/classification|
-|`packages/agent`|Agent runtime with tool calling and state management|
-|`packages/coding-agent`|Main CLI application (primary focus)|
-|`packages/tui`|Terminal UI library with differential rendering|
-|`packages/natives`|Bindings for native text/image/grep operations|
-|`packages/stats`|Local observability dashboard (`omp stats`)|
-|`packages/omptype`|ArkType-compatible schema validation with a lazy JIT runtime|
-|`packages/utils`|Shared utilities (logger, streams, temp files)|
-|`crates/natives`|Rust crate for performance-critical text/grep ops|
-
-**Catalog import convention**: code in this repo imports catalog _values_ (bundled models, model-thinking helpers, identity, descriptors, model manager/cache) from `@oh-my-pi/pi-catalog/<module>` — never via `@oh-my-pi/pi-ai`. The pi-ai barrel re-exports only the model/effort _types_ its own signatures use (`Model`, `Api`, `ThinkingConfig`, `Effort`, …); type-only imports of those from `@oh-my-pi/pi-ai` are fine.
-
-## GitHub
-
-- Before posting a GitHub comment or creating an issue, MUST show the target and proposed text and obtain user confirmation. An explicit instruction to post supplied text to a specified target already counts as confirmation.
-- A request to address or fix PR feedback permits drafting replies, not posting them without confirmation. A request only to get or check comments is read-only.
-- When authorized to resolve review feedback, MUST verify the fix, obtain approval for a factual reply citing the change and verification, and post it in the existing thread before resolving. NEVER resolve if the reply is unapproved or posting fails.
-- Permission to work on a PR does not authorize unrelated comments or issue creation.
-
-### Pull requests
-
-When authorized to create or edit a contributor-submitted PR, follow the checklist below. RoboOMP-managed PRs follow their dedicated workflow and enforced body format in `python/robomp/src/prompts/system_append.md` instead.
-
-- MUST read `CONTRIBUTING.md` and `.github/PULL_REQUEST_TEMPLATE.md` first. Preserve the template sections and checklist, including when shortening an existing description.
-- MUST obtain at least one sentence written by the contributor in their own words explaining what changed and why, as required by `CONTRIBUTING.md`. If it is missing, ask the contributor; NEVER generate a substitute. Preserve that sentence during edits.
-- For user-facing changes, MUST follow the [Changelog](#changelog) attribution rules. Internal issue fixes keep their issue links. For external contributions, add the PR link and contributor credit after GitHub assigns the number, then push the entry before marking the changelog checklist item complete.
-- MUST read back the published PR description after creating or editing it. Check only verified checklist items; explain skipped or inapplicable checks in `Testing`.
-
-## Code Quality
-
-- No `any` unless absolutely necessary.
-- **NEVER use `ReturnType<>`** — use the actual type name.
-- **NEVER use inline imports** — no `await import()`, no `import("pkg").Type` in type positions, no dynamic type imports. Always top-level.
-- Check `node_modules` for external API types instead of guessing.
-- **Barrel exports**: prefer `export * from "./module"` over named re-exports, including `export type { ... } from`. In pure `index.ts` barrels, use star re-exports even for single-specifier cases. If stars create ambiguity, remove the redundant export path; do not keep duplicates.
-- **Class privacy**: use ES `#private` fields; leave externally accessible members bare. **No `private`/`protected`/`public` keyword on fields or methods**, except on **constructor parameter properties** where TypeScript requires it (e.g. `constructor(private readonly session: ToolSession)`).
-- **Promises**: use `Promise.withResolvers()` instead of `new Promise((resolve, reject) => ...)`.
-- **Prompts**: never build prompts in code (no inline strings, template literals, or concatenation). Prompts live in static `.md` files; use Handlebars for dynamic content. Import them via `import content from "./prompt.md" with { type: "text" }` — not `readFile`.
-- **Judge questions**: one JSON file per feature (`src/prompts/judge/<feature>.json`) maps question ids to `{ instructions, criteria? }`. Load it with `judgeQuestions(file)` from `@oh-my-pi/pi-ai`; fill Handlebars instructions with `renderQuestion(question, context)`. `criteria` sets the kind: a list of levels → score, omitted or `true`/`false` keys only → yes/no, any other labels → choice (`{}` when the caller supplies the labels). Choice labels and answer types come from the JSON keys.
-- **Worker scripts**: workers re-enter the CLI entrypoint; never spawn separate worker entry modules. `cli.ts` declares itself as the worker host at startup (`declareWorkerHostEntry()` from `@oh-my-pi/pi-utils/env`) and dispatches hidden argv selectors (`__omp_worker_stats_sync`, `__omp_worker_tab`, `__omp_worker_js_eval`, `__omp_worker_tiny_inference`) before loading the command registry. Spawn sites use:
-  ```ts
-  import { workerHostEntry } from "@oh-my-pi/pi-utils";
-  const hostEntry = workerHostEntry();
-  const worker = hostEntry
-  	? new Worker(hostEntry, { type: "module", argv: ["__omp_worker_<name>"] })
-  	: new Worker(new URL("./<worker>.ts", import.meta.url).href, { type: "module" });
-  ```
-  When the process was started from the omp CLI — source `cli.ts`, npm-bundle `dist/cli.js`, or compiled binary — `workerHostEntry()` is `Bun.main` and the worker re-enters the single entry module, so no per-worker `--compile` entrypoints or bundle entries exist. Outside a CLI host (`bun test`, SDK embedding, standalone `omp-stats`) it returns `null` and the direct-module fallback loads the worker source. New worker kinds MUST add their selector to the dispatch table in `cli.ts` and keep the fallback branch.
-  History: `with { type: "file" }` only copied the entry as a raw asset (workers crashed silently in compiled binaries — issues #1011, #1027), and the later literal-path + extra-entrypoint pattern required keeping spawn literals and two build scripts in sync (issue #1150). The smoke probe below is the live validation of this contract.
-  Validate any new worker with the dedicated smoke probe: `omp --smoke-test` spawns the stats sync worker and the tiny-model subprocess, pings them, and exits — it's wired into `ci:test:smoke` and `scripts/install-tests/run-ci.sh` so binary, source-link, and tarball installs all exercise it. Add a sibling smoke if the new worker is on a different module graph.
-
-## Central Utilities
-
-Before writing a helper, check whether one already exists — `packages/coding-agent/src/utils/`, `@oh-my-pi/pi-utils`, `@oh-my-pi/pi-tui`, and the domain modules next to your callsite. This applies to **everything**: VCS wrappers, formatting/truncation/path-display helpers, image handling, clipboard, streams, temp files, caching. The central versions carry hardening a fresh copy always loses (timeouts, output caps, non-interactive env, lock avoidance, caching, TUI sanitization).
-
-- Search first: `grep` for the operation before implementing it. Two implementations of the same thing is a bug even when both work.
-- Examples of the pattern: `@oh-my-pi/pi-natives/vcs` and `src/utils/active-repo-context.ts` are the only sanctioned way to run git/jj (`import * as vcs from "@oh-my-pi/pi-natives/vcs"` — never hand-spawn via `$`/`Bun.spawn`); rendering goes through the helpers in TUI Sanitization below (`replaceTabs`, `truncateToWidth`, `shortenPath`, `PREVIEW_LIMITS`) rather than ad-hoc string math.
-- Missing capability? Extend the central helper (new option, new sub-function on the namespace) and call it — don't fork its logic locally.
-
-## Bun Over Node
-
-Use Bun APIs where they provide a cleaner alternative; fall back to `node:*` only for what Bun doesn't cover. **Never spawn shell commands for operations with proper APIs** (e.g., don't `Bun.spawnSync(["mkdir", "-p", dir])` — use `mkdirSync`).
-
-### Quick reference
-
-|Operation|Use|Not|
-|---|---|---|
-|File read/write|`Bun.file()`, `Bun.write()`|`readFileSync`, `writeFileSync`|
-|Spawn process|`` $`cmd` ``, `Bun.spawn()`|`child_process`|
-|Sleep|`Bun.sleep(ms)`|`setTimeout` promise|
-|Binary lookup|`$which("git")` from `@oh-my-pi/pi-utils`|`spawnSync(["which", "git"])`|
-|HTTP server|`Bun.serve()`|`http.createServer()`|
-|SQLite|`bun:sqlite`|`better-sqlite3`|
-|Hashing|`Bun.hash()`, `Bun.password.*`, WebCrypto|`node:crypto`|
-|Path resolution|`import.meta.dir`, `import.meta.path`|`fileURLToPath` dance|
-|JSON5|`Bun.JSON5.parse()` / `.stringify()`|`json5` package|
-|JSONL|`Bun.JSONL.parse()` / `.parseChunk()`|`text.split("\n").map(JSON.parse)`|
-|String width|`Bun.stringWidth()`|`get-east-asian-width`, custom|
-|Text wrapping|`Bun.wrapAnsi()`|custom ANSI-aware wrappers|
-
-### Process execution
-
-Prefer Bun Shell (`` $`cmd` ``) for simple commands:
-
-```typescript
-import { $ } from "bun";
-
-const result = await $`git status`.cwd(dir).quiet().nothrow();
-if (result.exitCode === 0) {
-	const text = result.text();
-}
-
-$`do-stuff ${tmpFile}`.quiet().nothrow(); // fire and forget
+```
+omptype, wire, natives → utils → catalog → ai → snapcompact → agent (pi-agent-core) → tui → stats, mnemopi → coding-agent
 ```
 
-Methods: `.quiet()`, `.nothrow()`, `.text()`, `.cwd(path)`.
+Boot path (`packages/coding-agent/src`):
 
-Use `Bun.spawn`/`Bun.spawnSync` only for: long-running processes (LSP, kernels), streaming stdin/stdout/stderr (SSE, JSON-RPC), or process control (signals, kill, complex lifecycle).
-
-When using `pipe` mode, cast the stream:
-
-```typescript
-const child = Bun.spawn(["cmd"], { stdout: "pipe", stderr: "pipe" });
-const reader = (child.stdout as ReadableStream<Uint8Array>).getReader();
+```
+cli.ts ─ profile bootstrap → declareWorkerHostEntry() → worker-selector dispatch (returns early) → --smoke-test
+       └ run() over cli-commands.ts → commands/launch.ts → main.ts runRootCommand
+           → sdk.ts createAgentSession: Settings, ModelRegistry, discovery (skills/rules/MCP/extensions),
+             createTools(ToolSession), each tool wrapped in ExtensionToolWrapper (approval gate + hooks),
+             new Agent({ streamFn, … }) from pi-agent-core, new AgentSession(…)
+           → mode: interactive (modes/interactive-mode.ts) | print (modes/print-mode.ts) | rpc (modes/rpc/) | acp (modes/acp/)
 ```
 
-### Node module imports
+One turn:
+1. `AgentSession.prompt()` (`session/agent-session.ts`) calls `agent.prompt()`.
+2. pi-agent-core runs its loop (`packages/agent/src/agent-loop.ts`). It calls `streamFn`, which is `session/settings-stream-fn.ts`, which calls pi-ai `streamSimple` (`packages/ai/src/stream.ts`).
+3. pi-ai resolves headers and in-flight limits, then dispatches: first the custom API registry, then special-cased providers, then `switch (model.api)`. It returns an `AssistantMessageEventStream`.
+4. Tool calls go through `executeToolCalls`, which calls `tool.execute(toolCallId, params, signal, onUpdate, ctx)` and emits `tool_execution_start`, `tool_execution_update` and `tool_execution_end`.
+5. `AgentSession.#handleAgentEvent` persists messages to JSONL (`session/session-manager.ts`) and handles compaction, retry/fallback and TTSR. It then re-emits the events to mode subscribers.
+6. In interactive mode, `modes/controllers/event-controller.ts` creates a pi-tui `ToolExecutionComponent` (`packages/tui/src/chat/tool-execution.ts`). The renderer comes from `toolRenderers[name]` (`packages/tui/src/tools/index.ts`).
 
-Always use **namespace imports** for `node:fs`, `node:path`, `node:os`:
+Natives: `crates/natives` (a cdylib facade over the sibling crates) compiles to `packages/natives/native/pi_natives.<platform>-<arch>[-modern|-baseline].node`.
+- `native/loader-state.js` loads the addon in this order: embedded addon (compiled binary), then Windows staging copy, then npm leaf package, then local `native/`.
+- If the addon is stale, missing exports throw `missingNativeExport` errors that tell you to run `bun run build:native`.
 
-```typescript
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
-import * as os from "node:os";
+## Key Directories
+
+| Path | Purpose |
+| --- | --- |
+| `packages/coding-agent` | Main CLI (`@oh-my-pi/pi-coding-agent`, bin `omp` → `src/cli.ts`) |
+| `packages/agent` | `@oh-my-pi/pi-agent-core`: agent loop, `Agent` state, compaction |
+| `packages/ai` | Multi-provider LLM streaming, auth/OAuth registry, error classes (`src/error/`) |
+| `packages/catalog` | Bundled `models.json`, KDL compat engine, model identity/classification, discovery |
+| `packages/tui` | TUI engine **and** coding-agent UI: `chat/`, `tools/` (renderers + `*Details` types), `overlays/`, `theme/`, `render/render-utils.ts` |
+| `packages/utils` | `logger`, `ptree`, `postmortem`, `prompt`, stream readers, dirs/env, `worker-host`, `TempDir`, `isEnoent`, `$which` |
+| `packages/natives` | JS loader for the Rust addon; lazy subpaths `./vcs`, `./path`, `./desktop`, `./clipboard` |
+| `packages/omptype` | ArkType-compatible `type()` schemas used for tool parameters |
+| `packages/stats`, `mnemopi`, `snapcompact`, `wire` | `omp stats` dashboard; SQLite memory engine; compacted-history PNG frames; collab wire types |
+| `packages/collab-web`, `browser-relay`, `metaharness`, `typescript-edit-benchmark` | Private: collab web client, Chrome relay extension, benchmark harnesses |
+| `crates/*` | Rust logic crates (shell, vcs, edit, ast, walker, vfs, iso, diff, predict, voice, builtins); `crates/vendor/` holds patched forks |
+| `scripts/` | Repo tooling: test runner, Rust tasks, setup, release, changelog fixers, codegen |
+| `docs/` | Feature/architecture docs. **Everything in `docs/**/*.md` ships in the `omp://` docs corpus** except `docs/agents/` and `docs/adr/` (dev-only; filtered by `isCorpusDoc` in `internal-urls/docs-index.ts`), so other dev-only notes do not belong there |
+| `python/` | `omp-rpc` client and `robomp` (pytest, ruff) |
+| `patches/`, `types/` | bun `patchedDependencies`; asset module typings (`types/assets/index.d.ts`, extend for new text-import extensions) |
+
+Inside `packages/coding-agent/src`:
+- `tools/`: built-in tools plus the `BUILTIN_TOOLS` registry (`tools/index.ts`) and `xdev.ts` (`xd://` devices).
+- `session/`: `AgentSession`, `SessionManager`, compaction, retry.
+- `config/`: settings registry, model registry.
+- `capability/` and `discovery/`: skills, rules, MCP, context files and hooks, including foreign formats such as Claude, Codex and Cursor.
+- `extensibility/`: the extension API, plugins, marketplace.
+- `internal-urls/`: one `*-protocol.ts` per scheme.
+- `modes/`: interactive, print, rpc and acp modes, plus `controllers/`.
+- `prompts/`: static `.md` prompt files.
+- `task/`: subagents.
+- `exec/`, `eval/`, `lsp/`, `mcp/`: execution and integration backends.
+
+There is no `src/tui/`: UI components live in pi-tui. `packages/coding-agent/DEVELOPMENT.md` maps subsystems to docs, but its directory list is partly stale.
+
+## Development Commands
+
+Run from the repo root. On Windows, run Bun from `D:/omp-fork`: under the `~/projects` junction, bun segfaults.
+
+```bash
+bun setup                         # install → build:native → link the `omp` dev launcher
+bun dev                           # run the CLI from source (packages/coding-agent/src/cli.ts)
+bun run check                     # gate: oxlint + oxfmt --check + per-package tsgo, and cargo fmt/clippy
+bun run fix                       # oxlint --fix + oxfmt (+ format-prompts) + cargo fmt/clippy --fix
+bun run test                      # all TS buckets + Rust (scripts/ci-test-ts.ts local)
+bun run test:rs                   # cargo nextest (vendored forks excluded) + cargo test --doc
+bun run ci:test:smoke             # cli.ts --version/--help/stats --help/--smoke-test
+bun run build:native              # rebuild the addon after Rust changes (cargo/napi, profile `local`)
+bun --cwd=packages/natives run build:bindings   # regenerate native/index.d.ts + index.js exports after Rust API changes
+bun --cwd=packages/coding-agent run build       # compiled binary → packages/coding-agent/dist/omp (CROSS_TARGET=… for cross)
+bun run gen:compat && bun run gen:models        # after KDL/catalog source edits; commit the generated files
 ```
 
-- Async-only file → `node:fs/promises`.
-- Needs both sync and async → `node:fs`, then `fs.promises.xxx` for async.
+- **`check:rs`, `lint:rs` and `test:rs` skip themselves locally** unless `git status` shows Rust-affecting changes. A green local `bun run check` may not have run clippy. Force a run with `CI=1`.
+- **Regeneration duties, all CI-checked:**
+  - after editing `Cargo.toml` or `Cargo.lock`, run `bun run gen:bazel-lock`
+  - after `bun.lock` changes, run `bun run gen:nix`
+  - after editing collab-web tool renderers, run `bun run gen:tool-views`
+- Root `bun run build` builds every workspace (binary, natives, stats, relay, collab-web) and is heavy. Prefer the targeted builds above.
+- **Commit only when asked.** Use `bun run check`, never `tsc`/`npx tsc`. Use `bun run test:rs`, never bare `cargo test`.
+- **`bun run release` is upstream-only.** It requires `<version|major|minor|patch|canary>`, bumps versions, then commits and pushes `main` plus the tag to `origin`, which here is the fork. Never run it in this fork. Fork versions follow upstream tags through rebases.
 
-### File I/O
+## Code Conventions & Common Patterns
 
-Prefer Bun:
+### TypeScript style
+- Formatting is oxfmt (`.oxfmtrc.json`): tabs (width 3), `printWidth` 120, double quotes, trailing commas, `arrowParens: avoid`. Lint is oxlint (`.oxlintrc.json`). There is no biome, eslint or prettier gate.
+- Avoid `any` unless unavoidable. **Never write `ReturnType<>`**; use the named type. Check `node_modules` for external API types instead of guessing.
+- **Imports are top-level only.** No `await import()` and no `import("pkg").Type`. Exception: the boot graph (`cli.ts`, `cli-commands.ts`, `commands/launch.ts`, `main.ts`) lazy-loads at comment-labelled latency/command boundaries. Keep those comments and add no new ones elsewhere.
+- **Barrels:** use `export * from "./module"` (including for types) in `index.ts` barrels. When stars collide, remove the redundant path; never duplicate it. pi-utils exports namespaces, so call sites read `logger.warn(…)`, `ptree.…`.
+- **Class privacy:** use ES `#private` fields. Write no `private`/`protected`/`public` keywords, except TypeScript-required constructor parameter properties.
+- `Promise.withResolvers()` instead of `new Promise((resolve, reject) => …)`.
+- Node modules are namespace-imported: `import * as fs from "node:fs/promises"`, `import * as path from "node:path"`, `import * as os from "node:os"`.
+- Deep subpath imports are normal (`@oh-my-pi/pi-tui/render/render-utils`, `@oh-my-pi/pi-catalog/compat/providers`). coding-agent's `package.json` `exports` maps `./<dir>/*`, so a **new top-level `src/` directory needs an exports entry**.
+- **Catalog values** (models, thinking helpers, identity, descriptors) come from `@oh-my-pi/pi-catalog/<module>`, never through `@oh-my-pi/pi-ai`. Type-only imports of `Model`, `Api`, `Effort` and similar from pi-ai are fine.
 
-```typescript
-const text = await Bun.file(path).text();
-const data = await Bun.file(path).json();
-await Bun.write(path, data); // auto-creates parent dirs
+### Reuse central utilities
+Search before writing any helper. Look in `packages/coding-agent/src/utils/`, `@oh-my-pi/pi-utils`, `@oh-my-pi/pi-tui` and the domain module next to your call site. The central versions carry the timeouts, output caps, non-interactive env, caching and sanitization that a copy loses. Two implementations of one thing is a bug; extend the helper instead.
+- git/jj: use `import * as vcs from "@oh-my-pi/pi-natives/vcs"` plus `src/utils/active-repo-context.ts`. Never spawn git yourself. Match native VCS errors by `error.name === "VcsError"`, not `instanceof`.
+- Streams: use `readLines`, `readJsonl`, `readSseJson` and `readSseEvents` from `@oh-my-pi/pi-utils`. Write manual reader loops only when the protocol demands it.
+
+### Bun over Node
+| Operation | Use | Not |
+| --- | --- | --- |
+| File I/O | `Bun.file(p).text()/.json()`, `Bun.write(p, data)` (creates parent dirs) | `readFileSync`/`writeFileSync`, `existsSync` in async code |
+| Directories | `node:fs/promises` (`mkdir`, `rm`, `readdir`) | shelling out (`mkdir -p`) |
+| Processes | `` $`cmd`.cwd(dir).quiet().nothrow() ``; `Bun.spawn` only for long-lived, streaming or signal-controlled processes | `child_process` |
+| Sleep, lookup, hash | `Bun.sleep(ms)`, `$which("git")` (pi-utils), `Bun.hash`/WebCrypto | `setTimeout` promise, `which` subprocess, `node:crypto` |
+| JSON5/JSONL, width, wrap | `Bun.JSON5`, `Bun.JSONL`, `Bun.stringWidth`, `Bun.wrapAnsi` | third-party packages, custom ANSI math |
+| SQLite, HTTP | `bun:sqlite`, `Bun.serve` | `better-sqlite3`, `http.createServer` |
+
+Optional reads use try/catch with `isEnoent(err)` from pi-utils; never check existence first and then read. Keep one `Bun.file(path)` handle per path. When reading from a piped `Bun.spawn` stdout, cast it: `(child.stdout as ReadableStream<Uint8Array>)`.
+
+### Tools
+- **Shape:** `class XTool implements AgentTool<typeof schema, XDetails>`, with a `name`, an omptype `parameters` schema (`type({ path: type("string").describe(…) })`), a `description` rendered from `prompts/tools/<tool>.md`, and `async execute(toolCallId, params, signal?, onUpdate?, ctx?)`. See `tools/read.ts` and `tools/bash.ts`.
+- **Registration:** add a factory to `BUILTIN_TOOLS` in `tools/index.ts` (`(s: ToolSession) => new XTool(s)`). Gate it with settings inside `createTools`. The renderer and the `XDetails` type go in pi-tui and are registered in `packages/tui/src/tools/index.ts` `toolRenderers`.
+- **Results:** build them with `ToolResultBuilder` (`tools/tool-result.ts`). Throw rather than return error text:
+  - `ToolError` (from `@oh-my-pi/pi-tui/tools/tool-errors`) for user-facing failures.
+  - `ToolAbortError` and `throwIfAborted(signal)` (`tools/tool-errors.ts`) for cancellation.
+- **Cancellation:** thread `AbortSignal` through every async boundary. Remove `abort` listeners in `finally`. Use `untilAborted`/`withTimeout` from pi-utils, and `postmortem.register()` for exit cleanup.
+
+### Settings, prompts, registries
+- **Settings:**
+  - Declare: `export const cfgFoo = register({ id: "domain.key", type, default, env?, ui: {…} })` in the domain's `settings.ts`, then add the domain to `config/all-settings.ts` `DOMAINS`. Order there sets the settings-panel order.
+  - Read with `cfgFoo.get(scope)` and react with `cfgFoo.listen(scope, cb)`.
+  - Precedence: env > runtime override > `--config` overlay > project > global `config.yml` > default.
+- **Prompts are never built in code** (no inline strings, template literals or concatenation). They live in `.md` files imported with `import tpl from "../prompts/x.md" with { type: "text" }` and are rendered with Handlebars through `prompt.render(tpl, ctx)` (pi-utils). `bun run fmt` also runs `format-prompts`.
+- **No DI container.** The codebase uses:
+  - Process singletons: `InternalUrlRouter.instance()`, `MCPManager`, `AgentLifecycleManager.global()`.
+  - Side-effect registration imports: `discovery/index.ts`, `config/all-settings.ts`.
+  - A constructor-injected `ToolSession` for tools.
+  - Late-bound host setters (`setInternalUrlSchemeHost`, `setXdevRendererLookup`) so pi-tui never imports coding-agent.
+- **Internal URLs** (`skill://`, `agent://`, `xd://`, …): one handler per scheme in `internal-urls/*-protocol.ts`, registered in the router constructor. Tools use the router's spec API, never branches on scheme names. `read xd://<tool>` returns a tool's docs; `write xd://<tool>` executes it (`tools/xdev.ts`).
+- **Extensions:** an `ExtensionFactory(pi)` uses `pi.on`, `pi.registerTool`, `pi.registerCommand` and `pi.registerProvider`. `ExtensionRunner` exists even with zero extensions, because `ExtensionToolWrapper` is the only approval gate.
+- **CLI subcommands:** add to `cli-commands.ts`. Anything not listed there is forwarded as a prompt.
+
+### Workers
+Workers re-enter the CLI entrypoint; never add separate worker entry modules. `cli.ts` calls `declareWorkerHostEntry()` from `@oh-my-pi/pi-utils/worker-host` (only when `isProcessEntry`). It dispatches `__omp_worker_*` selectors before the command graph loads. Shared selectors live in `cli/worker-selectors.ts`. Some kinds (stt, tts, mnemopi_embed, js_eval_process, stats_activity) are IPC subprocesses (`subprocess/worker-client.ts`), not threads. Spawn sites:
+
+```ts
+const hostEntry = workerHostEntry(); // @oh-my-pi/pi-utils/worker-host
+const worker = hostEntry
+	? new Worker(hostEntry, { type: "module", argv: ["__omp_worker_<name>"] })
+	: new Worker(new URL("./<worker>.ts", import.meta.url).href, { type: "module" });
 ```
 
-Use `node:fs/promises` for directory ops (`fs.mkdir`, `fs.rm`, `fs.readdir`) — Bun has no native directory APIs. Avoid sync APIs in async flows; use sync only when forced by a synchronous interface.
+`workerHostEntry()` is `null` under `bun test` and SDK embedding, so keep the fallback branch. For each new worker:
+- add its selector to the dispatch in `cli.ts`
+- export a `smokeTest*` probe
+- wire the probe into `runSmokeTest` so `omp --smoke-test` covers it
 
-**Anti-patterns:**
+The smoke run also executes in `ci:test:smoke` and `scripts/install-tests/run-ci.sh`.
 
-- `existsSync`/`readFileSync`/`writeFileSync` in async code → `Bun.file()` APIs.
-- `mkdir(dirname(path), …)` before `Bun.write(path, …)` → redundant; `Bun.write` handles it.
-- `if (await file.exists()) { await file.json() }` → two syscalls plus race. Use try-catch with `isEnoent`:
-  ```typescript
-  import { isEnoent } from "@oh-my-pi/pi-utils";
-  try {
-  	return await Bun.file(path).json();
-  } catch (err) {
-  	if (isEnoent(err)) return null;
-  	throw err;
-  }
-  ```
-- Multiple `Bun.file(path)` handles for the same path (including across `checkX`/`loadX` helpers).
-- `Buffer.from(await Bun.file(x).arrayBuffer())` → `await fs.readFile(path)`.
-- Existence check + try-catch around the same read → drop the existence check.
+### Model/provider policy lives in KDL
+**Never hard-code model- or provider-conditional policy in TS.** That rules out `id.includes("claude")`, id regexes, and per-model tables for effort, pricing, context windows, modalities, routing or quirks.
+- **Where policy lives:** `packages/catalog/src/compat/rules/`. The grammar and precedence are in its `README.md`. The five strata:
+  - `taxonomy/`: identity
+  - `classes/`: model-lineage truths
+  - `providers/<id>.kdl`: deployment contracts, default model, env keys, discovery seeds
+  - `runtime/behavior.kdl`: pre-lookup heuristics
+  - `auth/<id>.kdl`: drives pi-ai's `PROVIDER_REGISTRY`
+- **Branching in TS** goes only through `classifyModel()` facts (class/family/revision/effort). An id no selector can isolate gets an exact-id `models` residue rule with a comment.
+- **Ties** throw `AmbiguousOverlapError`. Fix them with `priority=` in KDL.
+- **Generated files** (never hand-edit):
+  - `packages/catalog/src/models.json`: `gen:models`. Fix it via `scripts/generate-models.ts`, the `provider-models/openai-compat.ts` mappers, `PROVIDER_DESCRIPTORS` (`descriptors.ts`, factories only) or the KDL.
+  - `src/compat/rules.json`, `auth-ids.ts` and `provider-ids.ts`: `gen:compat`.
+  - `native/index.d.ts` and the generated export block in `native/index.js`: `build:bindings`.
+  - `nix/bun.nix`, `bazel/clippy.bazelrc` and `MODULE.bazel.lock`.
+- Commit generated output alongside its source. Regression tests target the rule, descriptor or mapper, not the bundled JSON.
 
-### Streams
+### Logging and TUI output
+- **No `console.*` where the TUI, RPC, SDK, workers or background runtimes may be active.** It corrupts rendering and protocols. Use `logger.error|warn|debug(msg, ctx)` from `@oh-my-pi/pi-utils`, which writes rotating `omp.<DATE>.<PID>.log` files under `getLogsDir()` (default `~/.omp/logs`). Only standalone commands that exit without entering the TUI may write user-facing stdout.
+- **Sanitize every render path.** That covers success output, errors (which often embed file content), diffs and streaming previews. The helpers come from `@oh-my-pi/pi-tui/render/render-utils`:
+  - `replaceTabs()` for tabs
+  - `truncateToWidth()` with `TRUNCATE_LENGTHS` for long lines
+  - `shortenPath()` for paths
+  - `PREVIEW_LIMITS`; no ad-hoc numbers
+- **Streaming tool previews:**
+  - Decode streamed args only through `decodeStreamedToolArgs` / `ToolArgsRevealController` (`modes/controllers/tool-args-reveal.ts`), on both the live and the transcript-rebuild paths.
+  - Never spread parsed `arguments` beside a raw `__partialJson`.
+  - Bash previews must keep preview-only fields through `event-controller.ts`, `modes/utils/ui-helpers.ts` and `packages/tui/src/chat/tool-execution.ts`. `#buildRenderContext()` must work before a result exists.
+  - Verify both the live and the rebuilt paths.
+- **pi-tui `Component.render(width)`** returns lines that each fit `width`. Return the same array when nothing changed so memoization works.
 
-Prefer centralized helpers:
+### Rust
+- **Formatting and lints:**
+  - `rustfmt.toml`: hard tabs, width 3, `max_width` 100, `StdExternalCrate` import grouping.
+  - Clippy runs pedantic + nursery with `-D warnings`. `#[allow]` needs a reason.
+- **Layering:** napi-free logic lives in sibling `pi-*` crates; `pi-natives` holds thin `#[napi]` adapters. Blocking work goes through `task.rs` `blocking_task`.
+- **Panics:** `catch_unwind` turns panics into rejected Promises. That relies on `panic = "unwind"` in `release`, so keep it.
+- **Profiles** (root `Cargo.toml` + `.cargo/config.toml`):
+  - `dev`: default
+  - `release`: fat LTO
+  - `local`: thin LTO, incremental; the default for `build:native`
+  - `profiling`: symbols kept
+  - `ci`: thin LTO, stripped
+- **Shipped addons** are built by Bazel (`bazel/defs.bzl`), not the Cargo `release` profile.
+- Never set `split-debuginfo = "off"` on a profile with debuginfo: on Mach-O it silently drops `file:line` from backtraces.
+- **Already rejected, with measurements:** sccache, mold, and `panic = "abort"` on `dev`. Don't re-propose them.
+- **Nightly toolchain:** `embed-metadata = false` is nightly-coupled, so keep it in sync with `rust-toolchain.toml`.
 
-```typescript
-import { readStream, readLines } from "./utils/stream";
-const text = await readStream(child.stdout);
-for await (const line of readLines(stream)) {
-	/* ... */
-}
-```
+## Important Files
 
-Manual reader loops only when the protocol requires it (SSE, streaming JSON-RPC).
+- **Entry and wiring:**
+  - `packages/coding-agent/src/cli.ts`: entry, worker dispatch, `runSmokeTest`
+  - `src/cli-commands.ts`
+  - `src/main.ts`
+  - `src/sdk.ts`: `createAgentSession`
+  - `src/session/agent-session.ts`
+- **Tools and rendering:**
+  - `src/tools/index.ts`: `ToolSession`, `BUILTIN_TOOLS`
+  - `packages/tui/src/tools/index.ts`: `toolRenderers`
+  - `packages/tui/src/tui.ts`: differential renderer
+- **Runtime core:**
+  - `packages/agent/src/agent-loop.ts` and `agent.ts`
+  - `packages/ai/src/stream.ts`
+  - `packages/ai/src/registry/registry.ts`
+- **Settings and URLs:**
+  - `src/config/registry.ts`
+  - `src/config/all-settings.ts`
+  - `src/internal-urls/router.ts`
+- **Catalog policy:** `packages/catalog/src/compat/rules/README.md`, `packages/catalog/scripts/{compile-compat,generate-models}.ts`
+- **Natives:** `crates/natives/src/lib.rs`, `packages/natives/native/{index,loader-state}.js`, `scripts/bazel-natives.ts`, `packages/natives/scripts/build-bindings.ts`
+- **Tooling:**
+  - `scripts/ci-test-ts.ts`
+  - `scripts/run-rs-task.ts`
+  - `scripts/setup.ts`
+  - `scripts/fix-changelogs.ts`
+  - `scripts/merge-pr.ts`
+  - `.github/workflows/ci.yml`
+- **Config:**
+  - `package.json`: scripts, workspace `catalog:` pins
+  - `bunfig.toml`: exact, hoisted installs; 3-day minimum release age; `.md`/`.py` text loaders
+  - `tsconfig.base.json`
+  - `.oxlintrc.json` and `.oxfmtrc.json`
+  - `Cargo.toml`, `rust-toolchain.toml`, `rustfmt.toml`
+  - `.config/nextest.toml`
+  - `deny.toml`
+  - `MODULE.bazel`
 
-### Misc
+## Runtime/Tooling Preferences
 
-- **Sleep**: `await Bun.sleep(ms)`, never `new Promise(r => setTimeout(r, ms))`.
-- **Password hashing**: `Bun.password.hash(pw, "bcrypt")` / `Bun.password.verify(pw, hash)`.
-- **String width**: `Bun.stringWidth(text, { countAnsiEscapeCodes?: false })`.
-- **Wrapping**: `Bun.wrapAnsi(text, width, { wordWrap, hard, trim })`.
+- **Bun only.** `packageManager: bun@>=1.4`. The engines floor `>=1.3.14` is enforced at startup, and Nix and Docker pin 1.4.2. Install with `bun install`, never npm or pnpm. Internal deps use `catalog:` versions.
+- **Type checking uses `tsgo`** (`@typescript/native-preview`, run as `tsgo -p tsconfig.json --noEmit` per package through `check:types`). There is no emit, and packages export `./src/*.ts` directly.
+- **Rust:** nightly pinned in `rust-toolchain.toml` (required by `#![feature(alloc_error_hook)]` and `[unstable]` cargo config). Edition 2024. CMake builds need Ninja. `test:rs` needs `cargo-nextest`.
+- **Bazel is used only in CI** (Rust validation and release addons). It pins its own nightly in `MODULE.bazel`, which differs from `rust-toolchain.toml`. Windows hosts can only build the `host` addon, through cargo/napi against VS Build Tools. `build-bindings.ts` finds VS cmake/ninja via vswhere.
+- **No git hooks:** the `lint-staged` config is inert. `prepare` only runs `gen:tool-views`.
+- **Line endings are LF** (`.gitattributes`), except `.cmd`/`.bat`.
+- **Linked `omp` launcher:** `packages/coding-agent/scripts/omp` runs bun from `~/.omp/.dev-cwd`, so foreign `bunfig.toml` preloads don't apply.
 
-## Model/Provider Policy Lives in KDL
+## Testing & QA
 
-**NEVER hard-code model- or provider-conditional policy in TypeScript.** No `id.includes("claude")`, no model-name regexes, no per-model lookup tables (effort ladders, pricing, context windows, modalities, API routing, quirk flags). All of it belongs in the KDL rule tree at `packages/catalog/src/compat/rules/`, compiled by `bun run gen:compat` into the committed `rules.json` and resolved at build time via `resolveModelPolicy`/`buildModel`.
+- **Framework:** `bun:test` only; `vi`, `spyOn`, `mock` and `expect` all come from `"bun:test"`.
+  - Tests live in `packages/<pkg>/test/**/*.test.ts`, and Rust tests are inline `#[cfg(test)]` modules plus `crates/*/tests/*.rs`.
+  - There are no snapshots and no coverage thresholds.
+- **Commands:**
+  - One file: from the package dir (`D:/omp-fork/packages/<pkg>`), run `bun test test/tools/glob.test.ts -t "<regex>"`.
+  - One package: `bun --cwd=packages/<pkg> run test`.
+  - coding-agent must go through `scripts/ci-test-ts.ts`, via its `test` script or `ci:test:coding-agent:{singleton,ui,runtime,native}`. A bare whole-package `bun test` OOMs or hits GC aborts.
+- **What the runner does:**
+  - chunks files
+  - strips credential env (`*_API_KEY`, `AWS_*`, `GITHUB_TOKEN`, …)
+  - sets `PI_TEST_RUNTIME=1`
+  - applies a 30s per-test timeout
+  - knobs: `OMP_TEST_CONCURRENCY`, `OMP_TEST_SHARD=i/n`, `OMP_TEST_TIMEOUT`, `--full`, `--dry-run`
+- **Buckets follow content markers.** Any direct `process.env.X =`, `Bun.env[…] =`, `Settings.init(` or `vi.useFakeTimers(` moves a file into the serial `singleton` bucket, so prefer scoped helpers.
+- **Isolation patterns in use:**
+  - `spyOn`/`vi.spyOn` on namespace-imported modules or prototypes, with `afterEach(() => vi.restoreAllMocks())`
+  - constructor-injected fakes (`new GlobTool(session, { stat, nativeGlob })`)
+  - `Settings.isolated({…})`
+  - `beginSettingsTest()`/`restoreSettingsTestState()`
+  - `withEnv()` and `withOfficialAnthropicEndpoint()` (ai), `withoutTerminalMultiplexer()` (tui)
+  - `TempDir.createSync()` with `using`
+  - `Promise.withResolvers()` gates
+- **Never use `mock.module()`.** It leaks across files (oven-sh/bun#12823).
+- **Tests must be full-suite safe:** no file-wide mutation of `Bun.*`, `process.platform` or env.
+- **Live-provider E2E** runs only with `E2E=1` (`packages/ai/test/oauth.ts` `e2eApiKey`). Local-server suites skip themselves when the server is absent.
+- **Platform:** about 40 files `skipIf(process.platform === "win32")`. CI runs TS tests on Linux only.
+- **CI** (`.github/workflows/ci.yml`):
+  - **PRs:** `cargo deny`, `ci:check:full` (TS only), the TS buckets, smoke tests, install-method tests.
+  - **Non-PR events:** Rust validated via `bazelisk test //crates/...` plus clippy/rustfmt aspects.
+  - **Never run anywhere:** `packages/stats` tests, `metaharness`, most `scripts/*.test.ts`, and the Python tests.
+- **What earns a test.** Every test defends one externally observable contract and names the failure a consumer would see. Good targets:
+  - computed transformations
+  - distinct branches and boundaries
+  - exact wire bytes when a consumer parses them
+  - precedence and negative contracts that prevent a real leak or 400
+  - regressions that reproduce the real failure path
+- **Delete on sight:**
+  - echo tests (a builder copied a fixture)
+  - passthrough `fn(x) === x`
+  - default and wording assertions, non-empty or length-grew checks, bare `not.toThrow()`, and `expect(true)`
+  - duplicate parameterized rows
+  - narrower mocked tests that restate an integration test
+- **Never source-grep.** Don't read `.ts`/`.rs` sources and assert on their text. Run the code, use the smoke probe, or enforce structure with a type test or an oxlint rule. Asserting on files your code *wrote* is fine.
+- **Error tests:** trigger the real failure and assert the surfaced contract.
+- **Cyclic or large inputs:** assert a bounded result.
+- **Tiny low-risk changes need no test.** Prefer focused package-local verification.
 
-Ownership strata (see `src/compat/rules/README.md`):
+## Commits, Changelog & GitHub
 
-- `taxonomy/*.kdl` — identity: class membership, families, revision extraction, reviewed overrides, suffix collapse.
-- `classes/*.kdl` — model-lineage truths (behavior inherent to a model line, on any host).
-- `providers/*.kdl` — deployment contracts (behavior a host imposes), plus documented exact-id residue.
-- `runtime/behavior.kdl` — heuristics that run before/outside exact model lookup (`api-routes`, `model-limits`, `exclude-models`, `pricing-peer`, hosted defaults).
-
-Rules for TS code:
-
-- Branching on model identity in TS is allowed **only** through structured facts from `classifyModel()` (`class`/`family`/`revision`/effort facts) — never through string matching on ids, and prefer a KDL axis when one can express the policy.
-- Discovery mappers map authoritative upstream fields as reported; seed neutral values only for fields the upstream omits or misreports **and** KDL explicitly owns via a correction axis (`input-modalities`, `cost-patch`, `limits-patch`, `context-window-floor`, thinking axes). Assert rule-owned corrections through `buildModel`; raw discovery specs remain the right assertion surface for parsing/normalization contracts.
-- An id that no selector can isolate gets an exact-id `models` residue rule with a comment — never a special case in TS.
-- Equal-rank rule overlaps throw `AmbiguousOverlapError` at resolve time; fix with an explicit `priority=` in KDL, not code.
-- After editing rules: `bun run gen:compat` and commit `rules.json` alongside the `.kdl` change.
-
-## Generated Files
-
-**NEVER edit `packages/catalog/src/models.json` directly.** It is generated from upstream sources (stencil.so, provider catalog discovery, OpenCode docs) by `packages/catalog/scripts/generate-models.ts` and the descriptors/resolvers in `packages/catalog/src/provider-models/`. Hand-edits get overwritten on the next regen. The same applies to `packages/catalog/src/compat/rules.json`, compiled from the KDL tree by `bun run gen:compat`.
-
-To change an entry, fix the source:
-
-- **Model/provider policy** (identity, thinking ladders, wire quirks, modality/limit/pricing corrections, API routing, roster exclusions) → the KDL tree in `packages/catalog/src/compat/rules/` (see the section above).
-- **Provider catalog entries** (default model, discovery factory/flags) → the `CATALOG_PROVIDERS` table in `packages/catalog/src/provider-models/descriptors.ts`.
-- **Discovery/request plumbing** (endpoint shapes, auth, response parsing) → the mappers in `packages/catalog/src/provider-models/openai-compat.ts`.
-- **Generator wiring** (upstream merges, premium multipliers, post-processing order) → `packages/catalog/scripts/generate-models.ts`.
-
-Regenerate with `bun run gen:compat` and/or `bun run gen:models` and commit the generated files alongside the source change. Add a regression test against the **rule/descriptor/mapper**, not the bundled JSON, so it survives upstream metadata shifts.
-
-## Logging and CLI Output
-
-Code that may run while the TUI, RPC, SDK, workers, or background runtimes are active MUST NOT use `console.log`/`error`/`warn`; it corrupts rendering or protocols. Use the centralized logger:
-
-```typescript
-import { logger } from "@oh-my-pi/pi-utils";
-
-logger.error("MCP request failed", { url, method });
-logger.warn("Theme file invalid, using fallback", { path });
-logger.debug("LSP fallback triggered", { reason });
-```
-
-Logs go to `~/.omp/logs/omp.YYYY-MM-DD.log` with automatic rotation; `bun test` processes write theirs to a per-user `omp-test-logs-<uid>/` under the OS temp dir instead. Standalone CLI commands that exit without entering the TUI MAY use `console.*` or process streams for intentional user-facing output. Keep structured stdout clean. This exception is semantic, not filename-based; shared code must use `logger` or an explicit output sink.
-
-## TUI Sanitization
-
-All text displayed in tool renderers must be sanitized. Raw content (file contents, error messages, tool output) breaks terminal rendering: tabs → visual holes, long lines → overflow, paths → leak home directory.
-
-**Rules:**
-
-- **Tabs → spaces** via `replaceTabs()` (from `@oh-my-pi/pi-tui` or `../tools/render-utils`).
-- **Truncate** lines with `truncateToWidth()` / `ui.truncate()`. Use `TRUNCATE_LENGTHS` constants.
-- **Shorten paths** with `shortenPath()` (replaces home with `~`).
-- **Preview limits** from `PREVIEW_LIMITS`. No ad-hoc numbers.
-
-**Apply to every render path**, not just the happy one:
-
-- Success output (file previews, command output, search results).
-- **Error messages** — these often embed file content (e.g., patch failure messages include unmatched lines). If a message contains file content, it needs `replaceTabs()`.
-- Diff content (added and removed).
-- Streaming previews.
-
-### Streaming tool previews
-
-Tool-call previews can have **multiple render paths**. If you add preview-only fields or depend on partially streamed args, update every path — not only the final renderer. Streamed argument buffers decode into display args via `decodeStreamedToolArgs` / `ToolArgsRevealController` (`modes/controllers/tool-args-reveal.ts`); both the live event path and transcript rebuilds must go through them — never spread provider-parsed `arguments` next to a raw `__partialJson` (parsed args lag the stream by a throttled parse window).
-
-For the bash tool specifically:
-
-- The pending preview may need raw `partialJson`, not just parsed `arguments`. Parsed args lag until a JSON object closes, which makes inline env assignments appear only at the end.
-- Preserve preview-only fields (e.g. `__partialJson`) through `event-controller.ts`, transcript rebuilds in `ui-helpers.ts`, and merged call/result rendering in `tool-execution.ts`. Missing one path causes inconsistent previews.
-- `ToolExecutionComponent.#buildRenderContext()` for bash must work even before a result exists — the renderer uses call args plus render context to show the command preview while streaming.
-- Verify both live streaming and rebuilt transcript paths after any bash preview change. A fix in one path does not fix the other.
-
-## Commands
-
-- NEVER commit unless asked.
-- Never use `tsc`/`npx tsc` — always `bun check`.
-- Never run `cargo test` directly for Rust tests — use `bun run test:rs`. It runs `cargo nextest run` (config: `.config/nextest.toml`) followed by a `cargo test --doc` pass, because nextest does not execute doctests. The doctest pass runs every runnable doctest in the workspace's lib crates; today that is tree-sitter-go's one example (omp-natives is a `cdylib`, which rustdoc skips; omp-builtins' examples are `ignore`d vendored uutils docs).
-- `bun check`'s Rust half runs only when the branch changed a Rust-affecting file (`*.rs`, `crates/`, Cargo/toolchain files) since its merge base with `upstream/main` or `origin/main`, committed or not; it always runs in GitHub Actions, when that cannot be determined (e.g. shallow clone), or with `OMP_FORCE_RUST_TASKS=1`.
-- Merge commits (maintainer merges of PRs) follow: `Merge PR #<number>: <conventional PR subject> (@<author>)` — e.g. `Merge PR #6386: feat(catalog): add native Meta Model API provider (@eggpeat)`.
-## Rust Build Profiles
-
-Profiles live in the root `Cargo.toml`; `.cargo/config.toml` carries the settings Cargo.toml cannot express. Both are committed, so no local `~/.cargo/config.toml` is required.
-
-|Profile|Use|
-|---|---|
-|`dev`|Default. Line tables for our crates, no debuginfo for deps, deps at `opt-level = 2`.|
-|`release`|Shipping build: fat LTO, 1 codegen unit, stripped.|
-|`local`|Fast local release iteration: thin LTO, 16 codegen units, incremental.|
-|`profiling`|`release` codegen with symbols kept, for `perf`/`samply`/Instruments.|
-|`ci`|Thin LTO, no debuginfo, stripped.|
-
-**Never set `split-debuginfo = "off"` on a profile that has debuginfo.** On Mach-O the linker never merges DWARF into the executable — it writes a debug map (`N_OSO`) pointing at the `.o` files, and `"unpacked"` is what keeps those files. With `"off"` every backtrace frame in our own crates silently loses `file:line`; the `panicked at foo.rs:3` header still prints (that is `#[track_caller]`, not debuginfo), which makes the loss easy to miss. `ci` may use `"off"` only because it sets `debug = false`.
-
-`embed-metadata = false` (in `.cargo/config.toml`) keeps crate metadata in `.rmeta` instead of duplicating it into every rlib — measured 196 MB → 130 MB on a reqwest-sized graph at identical build times. Its accepted spelling is toolchain-coupled; keep it in sync with `rust-toolchain.toml`.
-
-Rejected, with measurements, so nobody re-litigates them: **sccache** (cannot cache incremental, bin, or proc-macro crates — measured slower than not using it), **mold** (ELF-only; no Mach-O support), and **`panic = "abort"` on `dev`** (Cargo ignores `panic` for the test profile, so the whole dep graph builds twice — 131 MB → 214 MB).
-
-## Testing Guidance
-
-Test the contract the system exposes — not the easiest internal detail to assert.
-
-- Every new test must defend one **concrete, externally observable contract**: behavior, output shape, state transition, error mapping, or a regression-prone parsing boundary. If you cannot name the contract, do not add the test.
-
-### Good vs. bad test filter
-
-- **Name the failure mode.** Every test MUST state what a consumer observes if it regresses. Cannot name one? NEVER add it.
-- **Good: transformation.** One fixture MAY prove parse/render/normalize/encode/resolve behavior when output is computed, not echoed.
-- **Good: branch or boundary.** Distinct inputs, empty values, malformed input, version/provider routing, and state transitions MUST prove distinct outcomes.
-- **Good: external contract.** Exact bytes/shape MAY be asserted when a provider, parser, protocol, or persisted consumer reads them.
-- **Good: precedence or negative contract.** Keep explicit `false`/override-wins assertions and required absence only when they prevent a documented leak, downgrade, 400, or incompatible wire field.
-- **Good: regression.** A repro MUST trigger the prior real failure path and assert the corrected observable result.
-- **Bad: static echo.** NEVER test a constructor/builder merely copied a fixture or baked constant into an in-memory config/metadata field.
-- **Bad: success passthrough.** NEVER assert `fn(x) === x` when `x` was already supplied/declared valid; assert a transform, rejection, or downstream effect instead.
-- **Bad: wording/defaults.** NEVER assert prompt/UI boilerplate, a default literal, object existence, non-empty output, or length growth without a consumer contract.
-- **Bad: duplicate rows.** Parameterized/loop rows MUST each cover a distinct branch, provider/model path, or consumer contract; delete same-path duplicates.
-- **Metadata exception.** Exact metadata, identity, ordering, or `undefined` MAY remain only when a downstream consumer depends on it and the test establishes branch, precedence, negative-contract, wire, or regression evidence.
-- **Termination exception.** For cyclic/large inputs, assert a bounded output, surfaced error, or state change; bare `not.toThrow()` is insufficient.
-- No placeholder tests, tautologies, or "the code ran" assertions (`expect(true).toBe(true)`, bare `not.toThrow()`, non-empty string checks, length-grew checks, "prompt exists" checks without semantic assertion).
-- Prefer contract-level tests over implementation details. Avoid asserting internal helper wiring, field assignment, singleton identity, incidental ordering, prompt boilerplate, or passthrough option forwarding unless another component depends on that exact detail.
-- Don't duplicate coverage across abstraction levels. If an integration test already proves the behavior, drop the narrower unit test that restates it through mocks.
-- Tests **must be full-suite safe**, not just file-local safe. No long-lived file-wide mutations of `Bun.*`, `process.platform`, `process.env`, or `Bun.env` when a narrower seam exists. Prefer per-test `vi.spyOn(...)` with `vi.restoreAllMocks()` in `afterEach`. A test that passes alone but poisons later files is broken.
-- **Never use `mock.module()`**. Bun's `mock.module()` mutates the global module registry and leaks across files ([oven-sh/bun#12823](https://github.com/oven-sh/bun/issues/12823)). Use `spyOn` on the imported module object instead. For pass deps, import the pass and spy on `.run`. For package deps, namespace-import and spy on the exported function.
-- For lifecycle/stateful code, prefer one test per invariant or transition over several tiny tests asserting one field each from the same transition.
-- For error handling, trigger the real failure path and assert the surfaced contract — don't instantiate error classes directly or inspect internal metadata.
-- Smoke tests are acceptable only when they catch a failure mode narrower tests would miss. "Package boots" or "command starts" alone is not enough.
-- Assert exact strings, ordering, and formatting only when downstream code parses or depends on the exact bytes. Otherwise assert semantic content.
-- Compile-time guarantees → type checks/type tests, not runtime placeholders.
-- **Never source-grep.** A test that reads an implementation file (`.ts`/`.rs`/build script) and asserts on its _text_ — `expect(src).toContain("someCall()")`, `.toMatch(/import .../)`, `.not.toContain("oldName")`, or "comment must say X" — is banned. It tests how code _looks_, not what it _does_: it breaks on harmless refactors (comment reflow, rename, import reorder) and passes while the behavior is broken. Assert the observable contract instead (run the code, check output/state/error), use the runtime smoke probe for wiring you cannot exercise in-process, and enforce structural invariants (no value-import of X, no self-import) with a type test or an oxlint rule — never a string scan of the source. (Reading a file your code _wrote_ — apply-patch result, generated bundle, temp fixture — and asserting on that output is fine; that is behavior, not a source grep.)
-- Don't add tests for tiny low-risk changes unless they protect a real contract or fix a regression-prone edge case.
-- Prefer focused package-local verification for the changed area.
-
-## Changelog
-
-Location: `packages/*/CHANGELOG.md` (per package).
-
-**Format** — sections under `## [Unreleased]`:
-
-- `### Breaking Changes` (first if present)
-- `### Added`
-- `### Changed`
-- `### Fixed`
-- `### Removed`
-
-**Rules:**
-
-- New entries always go under `## [Unreleased]`.
-- Entries are one line, brief, and user-facing: lead with what the user will see or can now do. Root-cause narration and implementation detail belong in the commit/PR, not the changelog.
-- Never modify already-released sections (e.g., `## [0.12.2]`) — they are immutable.
-- Don't flag changelog section order or formatting in reviews or PRs — `bun run release` runs `fix-changelogs` which normalizes everything automatically.
-
-**Attribution:**
-
-- Internal (from issues): `Fixed foo bar ([#123](https://github.com/can1357/oh-my-pi/issues/123))`.
-- External contributions: `Added feature X ([#456](https://github.com/can1357/oh-my-pi/pull/456) by [@username](https://github.com/username))`.
-
-## Releasing
-
-1. Ensure all changes since last release are in each affected package's `[Unreleased]` section.
-2. Run `bun run release`.
-
-The script handles version bump, CHANGELOG finalization, commit, tag, publish, and adding new `[Unreleased]` sections.
+- **Conventional Commits** with a scope and a past-tense subject: `fix(bash): exported OMP_AGENT_SHELL in interactive pty shells`. The body explains why.
+- **Maintainer merges** (upstream) use `Merge PR #<n>: <subject> (@author)` via `scripts/merge-pr.ts`.
+- **Changelogs are per package:**
+  - Entries go in `packages/*/CHANGELOG.md` under `## [Unreleased]`, in the order `Breaking Changes`, `Added`, `Changed`, `Fixed`, `Removed`.
+  - Each entry is one user-facing line. Released sections are immutable.
+  - Upstream attribution links point to `can1357/oh-my-pi` issues/PRs. Fork entries carry no links.
+  - `bun run fix:changelogs` normalizes them. Don't flag ordering in reviews.
+- **GitHub:**
+  - Before posting any comment or issue, show the target and text and get confirmation.
+  - "Address PR feedback" means drafting replies, not posting them.
+  - Resolve a thread only after an approved reply has been posted.
+  - For contributor PRs, read `CONTRIBUTING.md` and `.github/PULL_REQUEST_TEMPLATE.md` first and keep the template. Keep the contributor's own why-sentence; never generate one. Read back the published description.
 
 ## Agent Skills
 

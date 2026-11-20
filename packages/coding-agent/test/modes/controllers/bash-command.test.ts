@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import type { BashPtyOptions, BashResult } from "@oh-my-pi/pi-coding-agent/exec/bash-executor";
 import { BashExecutionComponent } from "@oh-my-pi/pi-tui/chat/bash-execution";
+import { userCommandOwnsKeyboard } from "@oh-my-pi/pi-tui/chat/pty-keyboard";
 import { CommandController } from "@oh-my-pi/pi-coding-agent/modes/controllers/command-controller";
 import { getThemeByName, setThemeInstance } from "@oh-my-pi/pi-tui/theme";
 import type { InteractiveModeContext } from "@oh-my-pi/pi-coding-agent/modes/types";
@@ -286,13 +287,13 @@ describe("bash shortcut command", () => {
 		expect(Bun.stripANSI(bashComponent.render(80).join("\n"))).toContain("[Image: [image/png] 1x1]");
 	});
 
-	it("forwards composer keystrokes to a running PTY command until it exits (#17210)", async () => {
+	it("hands native PTY input to the command until exit, without reclaiming it after completion (#17210)", async () => {
 		const { ctx, executeBash } = createCwdContext("/tmp");
 		type Listener = (data: string) => { consume?: boolean } | undefined;
-		let listeners = new Set<Listener>();
+		const listeners = new Set<Listener>();
 		let globalExpansions = 0;
 		listeners.add(data => {
-			if (data !== "\x0f") return undefined;
+			if (userCommandOwnsKeyboard(ctx.ui) || data !== "\x0f") return undefined;
 			globalExpansions++;
 			return { consume: true };
 		});
@@ -300,35 +301,40 @@ describe("bash shortcut command", () => {
 		let focused: unknown = editor;
 		Object.assign(ctx, {
 			editor,
-			keybindings: { matches: (data: string, id: string) => id === "app.interrupt" && data === "\x1b" },
 			ui: {
 				requestRender: vi.fn(),
 				requestComponentRender: vi.fn(),
 				getFocused: () => focused,
-				addInputListener: (listener: Listener, options?: { prepend?: boolean }) => {
-					if (options?.prepend) listeners = new Set([listener, ...listeners]);
-					else listeners.add(listener);
+				setFocus: (value: unknown) => {
+					focused = value;
+				},
+				hasOverlay: () => false,
+				addInputListener: (listener: Listener) => {
+					listeners.add(listener);
 					return () => listeners.delete(listener);
 				},
 			},
 		});
-		const press = (data: string) => [...listeners].some(listener => listener(data)?.consume === true);
+		const press = (data: string) => {
+			if ([...listeners].some(listener => listener(data)?.consume === true)) return true;
+			if (!(focused instanceof BashExecutionComponent)) return false;
+			focused.handleInput(data);
+			return true;
+		};
 		const written: string[] = [];
-		const pressed: Record<string, boolean> = {};
 		let onStdin: BashPtyOptions["onStdin"];
 		executeBash.mockImplementationOnce(async (_command, _onChunk, options) => {
 			onStdin = options?.pty?.onStdin;
 			onStdin?.(data => written.push(data));
 			expect(editor.nativeKeyPassthrough).toBe(true);
-			// The command is blocked on `read` while the user types in the composer.
-			pressed.answer = press("y");
-			pressed.nanoWrite = press("\x0f");
-			pressed.enter = press("\r");
-			pressed.escape = press("\x1b");
-			pressed.mouse = press("\x1b[<0;10;5M");
-			focused = {}; // a dialog took focus
-			pressed.dialog = press("n");
+			expect(press("y")).toBe(true);
+			expect(press("\x0f")).toBe(true);
+			expect(press("\r")).toBe(true);
+			expect(press("\x1b")).toBe(true);
+			focused = {}; // A dialog keeps its input.
+			expect(press("n")).toBe(false);
 			focused = editor;
+			expect(press("z")).toBe(true); // Closing the dialog returns ownership.
 			return {
 				output: "ANSWER=y",
 				exitCode: 0,
@@ -341,27 +347,15 @@ describe("bash shortcut command", () => {
 			};
 		});
 		const controller = new CommandController(ctx);
-
 		await controller.handleBashCommand("read -k 1 answer");
+		expect(ctx.showError).not.toHaveBeenCalled();
 		expect(editor.nativeKeyPassthrough).toBe(false);
-
-		expect(written).toEqual(["y", "\x0f", "\r"]);
+		expect(written).toEqual(["y", "\x0f", "\r", "\x1b", "z"]);
 		expect(globalExpansions).toBe(0);
-		// Esc stays the cancel key; mouse reports and focused dialogs keep their input.
-		expect(pressed).toEqual({
-			answer: true,
-			nanoWrite: true,
-			enter: true,
-			escape: false,
-			mouse: false,
-			dialog: false,
-		});
-		// After exit the global Ctrl+O shortcut works again.
 		expect(press("\x0f")).toBe(true);
 		expect(globalExpansions).toBe(1);
 		expect(listeners.size).toBe(1);
-		// A native start notification queued behind command completion must not
-		// reclaim the composer after the PTY has exited.
+		// A queued native start notification must not reclaim an exited command.
 		onStdin?.(data => written.push(data));
 		expect(editor.nativeKeyPassthrough).toBe(false);
 		expect(listeners.size).toBe(1);

@@ -17,8 +17,10 @@ import {
 	type KeybindingsManager as TuiKeybindingsManager,
 	matchesKey,
 	setKeybindings,
+	type TUI,
 } from "@oh-my-pi/pi-tui";
 import { KeybindingsManager } from "@oh-my-pi/pi-tui/app-keybindings";
+import { PtyKeyboard } from "@oh-my-pi/pi-tui/chat/pty-keyboard";
 import { HtmlFormDialog } from "@oh-my-pi/pi-tui/html-form/dialog";
 import { parseHtmlForm } from "@oh-my-pi/pi-tui/html-form/parse";
 import { TempDir } from "@oh-my-pi/pi-utils";
@@ -1960,5 +1962,88 @@ describe("InputController image paste into an ask form note", () => {
 		expect(context.editor.pendingImages).toHaveLength(0);
 		expect(form.optionNotes()).toEqual([]);
 		form.dispose();
+	});
+});
+
+describe("InputController while a user command owns the keyboard", () => {
+	beforeAll(async () => {
+		await initTheme(false);
+	});
+
+	async function setupWithRunningCommand() {
+		const context = await createContext();
+		Object.defineProperty(context.ctx, "focusedAgentId", { value: "agent-1" });
+		context.spies.handlesBtwBranchKey.mockReturnValue(true);
+		context.spies.canFollowUpBtw.mockReturnValue(true);
+		const controller = new context.InputController(context.ctx);
+		controller.setupKeyHandlers();
+		// The running command's block: it takes pastes, so the image-paste shortcut would target it.
+		const command = { handleInput() {}, pasteText() {}, render: () => [], invalidate() {} };
+		const keyboard = new PtyKeyboard({
+			ui: {
+				addInputListener: () => () => {},
+				setFocus() {},
+				getFocused: () => context.ctx.ui.getFocused(),
+				hasOverlay: () => false,
+			} as unknown as TUI,
+			owner: command,
+			releaseTo: context.editor as unknown as Component,
+			write() {},
+			cancel() {},
+			modes: () => ({ applicationCursorKeysMode: false, bracketedPasteMode: false }),
+		});
+		return { ...context, command, keyboard, listeners: registeredInputListeners(context.spies.addInputListener) };
+	}
+
+	// The prompt box holds focus on the first key after a dialog closed; the command
+	// reclaims it for that key, so no shortcut may act on it either.
+	const keys: Array<{ name: string; data: string; focus: "command" | "prompt" }> = [
+		{ name: "ctrl+t (thinking)", data: "\x14", focus: "command" },
+		{ name: "ctrl+r (history search)", data: "\x12", focus: "command" },
+		{ name: "ctrl+g (external editor)", data: "\x07", focus: "command" },
+		{ name: "ctrl+shift+o (tool activity)", data: "\x1b[111;6u", focus: "command" },
+		{ name: "alt+l (display reset)", data: "\x1bl", focus: "command" },
+		{ name: "ctrl+o (tool expand)", data: "\x0f", focus: "command" },
+		{ name: "ctrl+v (image paste into focus)", data: "\x16", focus: "command" },
+		{ name: "left (focused agent)", data: "\x1b[D", focus: "prompt" },
+		{ name: "b (btw branch)", data: "b", focus: "prompt" },
+		{ name: "f (btw follow-up)", data: "f", focus: "prompt" },
+	];
+	for (const { name, data, focus } of keys) {
+		it(`leaves ${name} to the command`, async () => {
+			const { listeners, setFocused, command, editor, keyboard } = await setupWithRunningCommand();
+			try {
+				setFocused(focus === "command" ? command : editor);
+				expect(dispatchInput(listeners, data)).toBeUndefined();
+			} finally {
+				keyboard.release();
+			}
+		});
+	}
+
+	it.each([false, true])("leaves link hints to the command after a dialog closes (active=%s)", async active => {
+		const { ctx, listeners, setFocused, editor, keyboard } = await setupWithRunningCommand();
+		const start = vi.fn(() => true);
+		const type = vi.fn();
+		Object.defineProperty(ctx, "linkHintsActive", { value: active });
+		ctx.startLinkHints = start;
+		ctx.typeLinkHint = type;
+		ctx.keybindings.matches = (data, action) => action === "app.links.hint" && data === "h";
+		try {
+			setFocused(editor);
+			expect(dispatchInput(listeners, "h")).toBeUndefined();
+			expect(start).not.toHaveBeenCalled();
+			expect(type).not.toHaveBeenCalled();
+		} finally {
+			keyboard.release();
+		}
+	});
+
+	it("acts on shortcuts again once the run has ended", async () => {
+		const { ctx, listeners, keyboard } = await setupWithRunningCommand();
+		keyboard.release();
+
+		expect(dispatchInput(listeners, "\x14")).toEqual({ consume: true });
+		expect(ctx.toggleThinkingBlockVisibility).toHaveBeenCalledTimes(1);
 	});
 });

@@ -31,6 +31,7 @@ import { HistorySearchComponent } from "@oh-my-pi/pi-tui/overlays/history-search
 import { HookEditorComponent } from "@oh-my-pi/pi-tui/overlays/hook-editor";
 import { ReadToolGroupComponent } from "@oh-my-pi/pi-tui/chat/read-tool-group";
 import { ToolExecutionComponent } from "@oh-my-pi/pi-tui/chat/tool-execution";
+import { userCommandOwnsKeyboard } from "@oh-my-pi/pi-tui/chat/pty-keyboard";
 import { TreeSelectorComponent } from "@oh-my-pi/pi-tui/overlays/tree-selector";
 import {
 	chipLabel,
@@ -384,6 +385,7 @@ export class InputController {
 		if (!this.#focusedLeftTapListenerInstalled) {
 			this.#focusedLeftTapListenerInstalled = true;
 			this.ctx.ui.addInputListener(data => {
+				if (userCommandOwnsKeyboard(this.ctx.ui)) return undefined;
 				if (!this.ctx.focusedAgentId) return undefined;
 				if (!matchesKey(data, "left")) return undefined;
 				// An open overlay (the model picker's thinking slider) owns ←.
@@ -396,6 +398,7 @@ export class InputController {
 		if (!this.#btwBranchListenerInstalled) {
 			this.#btwBranchListenerInstalled = true;
 			this.ctx.ui.addInputListener(data => {
+				if (userCommandOwnsKeyboard(this.ctx.ui)) return undefined;
 				if (!matchesKey(data, "b")) return undefined;
 				if (!this.ctx.handlesBtwBranchKey()) return undefined;
 				if (this.ctx.ui.getFocused() !== this.ctx.editor) return undefined;
@@ -407,6 +410,7 @@ export class InputController {
 		if (!this.#btwCopyListenerInstalled) {
 			this.#btwCopyListenerInstalled = true;
 			this.ctx.ui.addInputListener(data => {
+				if (userCommandOwnsKeyboard(this.ctx.ui)) return undefined;
 				if (this.ctx.ui.getFocused() !== this.ctx.editor) return undefined;
 				if (this.ctx.editor.getText().trim()) return undefined;
 				if (matchesKey(data, "f") && this.ctx.canFollowUpBtw()) {
@@ -421,6 +425,7 @@ export class InputController {
 		if (!this.#focusedPasteListenerInstalled) {
 			this.#focusedPasteListenerInstalled = true;
 			this.ctx.ui.addInputListener(data => {
+				if (userCommandOwnsKeyboard(this.ctx.ui)) return undefined;
 				const focused = this.ctx.ui.getFocused();
 				if (!focused || focused === this.ctx.editor || !hasPasteText(focused)) return undefined;
 				if (!this.ctx.keybindings.matches(data, "app.clipboard.pasteImage")) return undefined;
@@ -433,6 +438,8 @@ export class InputController {
 			// These actions target the main transcript/editor rather than the
 			// focused prompt. Keep focused components' own bindings authoritative.
 			this.ctx.ui.addInputListener(data => {
+				// A running user command owns the keyboard; its keys belong to the program.
+				if (userCommandOwnsKeyboard(this.ctx.ui)) return undefined;
 				if (this.ctx.keybindings.matches(data, "app.thinking.toggle")) {
 					if (this.ctx.ui.hasOverlay()) return undefined;
 					this.ctx.toggleThinkingBlockVisibility();
@@ -506,6 +513,7 @@ export class InputController {
 			// viewer, log viewer, model picker) or when the focused component
 			// rebinds Ctrl+O for its own use (the tree selector's filter cycle).
 			this.ctx.ui.addInputListener(data => {
+				if (userCommandOwnsKeyboard(this.ctx.ui)) return undefined;
 				if (!this.ctx.keybindings.matches(data, "app.tools.expand")) return undefined;
 				if (this.ctx.ui.hasOverlay()) return undefined;
 				if (this.ctx.ui.getFocused() instanceof TreeSelectorComponent && matchesKey(data, "ctrl+o"))
@@ -900,6 +908,7 @@ export class InputController {
 	 * space held for push-to-talk) never reach this.
 	 */
 	#handleLinkHintInput(data: string): { consume?: boolean } | undefined {
+		if (userCommandOwnsKeyboard(this.ctx.ui)) return undefined;
 		// Overlays and editor-area dialogs (ask, selectors, hook input) own the keyboard.
 		const editorFocused = () => !this.ctx.ui.hasOverlay() && this.ctx.ui.getFocused() === this.ctx.editor;
 		if (!this.ctx.linkHintsActive) {

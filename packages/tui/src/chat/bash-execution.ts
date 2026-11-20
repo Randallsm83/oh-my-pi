@@ -6,7 +6,6 @@ import type { ImageContent } from "@oh-my-pi/pi-ai";
 import { Image } from "../components/image";
 import type { Loader } from "../components/loader";
 import { Text } from "../components/text";
-import { matchesKey } from "../keys";
 import { getImageDimensions, imageFallback, ImageProtocol, TERMINAL } from "../terminal-capabilities";
 import { Container, type TUI } from "../tui";
 import type { Terminal as XtermTerminalType } from "@oh-my-pi/pi-utils/vterm";
@@ -15,6 +14,7 @@ import type { OutputArtifactError } from "../tools/streaming-output";
 import type { MinimizedMeta, TruncationMeta } from "../tools/output-meta";
 import { resolveImageOptions, styleOutputLine } from "../render/render-utils";
 import { OutputPane } from "../render/output-pane";
+import { PtyKeyboard, type PtyKeyboardOptions } from "./pty-keyboard";
 import { normalizeInputForPty } from "../tools/bash-interactive";
 import {
 	loadXtermTerminal,
@@ -103,9 +103,8 @@ export class BashExecutionComponent extends Container {
 	#outputVersion = 0;
 	readonly #native = new Memo();
 	readonly #nativeImages = new NativeImageCache();
-	// Live PTY input plumbing for user `!` commands (see `setPtyInput`).
-	#ptyInput?: (data: string) => void;
-	#onCancel?: () => void;
+	// Keyboard ownership while an interactive user command runs (see `setPtyInput`).
+	#keyboard?: PtyKeyboard;
 
 	constructor(command: string, ui: TUI, excludeFromContext = false) {
 		super();
@@ -150,35 +149,30 @@ export class BashExecutionComponent extends Container {
 	}
 
 	/**
-	 * Wire the running PTY so keystrokes reach the command. Only the user `!`
-	 * surface calls this, and only on the user-shell PTY path; a component
-	 * without it stays display-only, which is the correct behavior for the
-	 * non-PTY fallback where there is no session to write to.
+	 * Hand the keyboard to the running PTY. Only the user `!` surface calls this,
+	 * and only on the user-shell PTY path; a component without it stays
+	 * display-only, which is correct for the non-PTY fallback where there is no
+	 * session to write to.
 	 */
-	setPtyInput(write: (data: string) => void, onCancel: () => void): void {
-		this.#ptyInput = write;
-		this.#onCancel = onCancel;
-		// Announce it. Forwarding is otherwise invisible - indistinguishable
-		// from a build that lacks it - so the running label is the only place
-		// the capability can be discovered without guessing.
-		this.#loader.setMessage("Running… (keys go to the command · esc to cancel)");
+	setPtyInput(write: (data: string) => void, cancel: () => void, releaseTo: PtyKeyboardOptions["releaseTo"]): void {
+		this.#keyboard = new PtyKeyboard({
+			ui: this.#ui,
+			owner: this,
+			releaseTo,
+			write,
+			cancel,
+			modes: () => this.#ptyTerminal?.modes ?? { applicationCursorKeysMode: false, bracketedPasteMode: false },
+		});
+		// Announce it: forwarding is otherwise invisible, and Ctrl+] is the only way out.
+		this.#loader.setMessage("Running… (keys go to the command · ctrl+] to cancel)");
 	}
 
-	/**
-	 * Esc cancels the run: while this component holds focus the input
-	 * controller's own Esc handler is unreachable, so a command that never
-	 * exits would otherwise have no way out. Every other key is normalized to
-	 * PTY bytes and forwarded. Keys are dropped once the command completes, so
-	 * a keystroke racing the exit cannot be written to a dead session.
-	 */
 	handleInput(data: string): void {
-		if (this.#status !== "running") return;
-		if (matchesKey(data, "escape") || matchesKey(data, "esc")) {
-			this.#onCancel?.();
-			return;
-		}
-		const normalized = normalizeInputForPty(data, this.#ptyTerminal?.modes.applicationCursorKeysMode ?? false);
-		if (normalized) this.#ptyInput?.(normalized);
+		this.#keyboard?.handleInput(data);
+	}
+
+	pasteText(text: string): void {
+		this.#keyboard?.pasteText(text);
 	}
 
 	/**
@@ -415,6 +409,7 @@ export class BashExecutionComponent extends Container {
 			showImages?: boolean;
 		},
 	): void {
+		this.#keyboard?.release();
 		this.#exitCode = exitCode;
 		this.#status = resolveExecutionStatus(exitCode, cancelled);
 		this.#endedAt ??= performance.now();

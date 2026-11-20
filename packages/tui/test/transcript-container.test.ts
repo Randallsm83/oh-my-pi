@@ -443,6 +443,127 @@ describe("TranscriptContainer row split", () => {
 		expect(rest).toContain("---");
 		expect(rest.filter(row => row === "AAA" || row === "BBB")).toEqual(["AAA", "BBB"]);
 	});
+
+	for (const capacity of [1, 3]) {
+		it(`acknowledges replay and newly displaced rows together with capacity ${capacity}`, () => {
+			const transcript = new TranscriptContainer();
+			const finished = {
+				isTranscriptBlockFinalized: () => true,
+				render: () => ["INTRO", "", "TITLE", "HEADER", "ROW01", "TAIL"],
+			};
+			const active = new Block(["active"], false);
+			transcript.addChild(new Block(["archived"], true));
+			transcript.addChild(finished);
+			transcript.addChild(active);
+			const initial = transcript.peekFinalizedBatch(80, 7)!;
+			expect(initial.rows).toEqual(["archived", "", "INTRO"]);
+			transcript.acknowledgeFinalizedBatch(initial.id);
+			expect(transcript.blockStates()).toEqual(["committed", "settled", "active"]);
+
+			transcript.beginReplay();
+			const replay = transcript.peekFinalizedBatch(40, capacity)!;
+			const expected = ["archived", "", "INTRO", "", "TITLE", "HEADER", "ROW01"];
+			if (capacity === 1) expected.push("TAIL", "");
+			expect(replay.kind).toBe("replay");
+			expect(replay.rows).toEqual(expected);
+			expect(transcript.blockStates()).toEqual(["committed", "settled", "active"]);
+			expect(transcript.canRemoveBlock(active)).toBe(true);
+			expect(transcript.renderViewport(40, capacity, frame)).toEqual(
+				capacity === 1 ? ["active"] : ["TAIL", "", "active"],
+			);
+
+			const retry = transcript.rerenderOfferedBatch(20, capacity)!;
+			expect(retry.id).toBe(replay.id);
+			expect(retry.rows).toEqual(expected);
+			expect(transcript.blockStates()).toEqual(["committed", "settled", "active"]);
+			transcript.acknowledgeFinalizedBatch(replay.id + 100);
+			expect(transcript.blockStates()).toEqual(["committed", "settled", "active"]);
+			transcript.acknowledgeFinalizedBatch(replay.id);
+			expect(transcript.blockStates()).toEqual(["committed", capacity === 1 ? "committed" : "settled", "active"]);
+			expect(active.isTranscriptBlockFinalized()).toBe(false);
+			expect(transcript.peekFinalizedBatch(20, capacity)).toBeUndefined();
+			if (capacity === 3) expect(transcript.peekFlushBatch(20)?.rows).toEqual(["TAIL", ""]);
+		});
+	}
+
+	it("replays compact history and newly emitted streaming rows in one acknowledged transaction", () => {
+		const transcript = new TranscriptContainer();
+		transcript.completeScrollback = true;
+		const archived = {
+			isTranscriptBlockCompact: () => true,
+			render: () => ["archived"],
+		};
+		transcript.addChild(archived);
+		const initial = transcript.peekFlushBatch(80)!;
+		expect(initial.rows).toEqual(["archived"]);
+		transcript.acknowledgeFinalizedBatch(initial.id);
+		transcript.addChild(new Block(["settled"], true));
+		const head = new AppendBlock(["s1", "s2", "s3", "tail"], ["s1", "s2", "s3"]);
+		transcript.addChild(head);
+
+		transcript.beginReplay();
+		const replay = transcript.peekFinalizedBatch(40, 2)!;
+		const expected = ["archived", "", "settled", "", "s1", "s2"];
+		expect(replay.kind).toBe("replay");
+		expect(replay.rows).toEqual(expected);
+		expect(transcript.blockStates()).toEqual(["committed", "settled", "active"]);
+		expect(transcript.canRemoveBlock(head)).toBe(false);
+		expect(transcript.renderViewport(40, 2, frame)).toEqual(["s3", "tail"]);
+
+		const retry = transcript.rerenderOfferedBatch(20, 2)!;
+		expect(retry.id).toBe(replay.id);
+		expect(retry.rows).toEqual(expected);
+		transcript.acknowledgeFinalizedBatch(retry.id);
+		expect(transcript.blockStates()).toEqual(["committed", "committed", "active"]);
+		expect(transcript.emittedStableRows()).toEqual([0, 0, 2]);
+		expect(head.isTranscriptBlockFinalized()).toBe(false);
+		expect(transcript.peekFinalizedBatch(20, 2)).toBeUndefined();
+		expect(transcript.renderViewport(20, 2, frame)).toEqual(["s3", "tail"]);
+	});
+
+	it("reflows a published active prefix in a replay without settling its block", () => {
+		const transcript = new TranscriptContainer();
+		const active = new ReflowingAppendBlock();
+		transcript.addChild(active);
+		const initial = transcript.peekFinalizedBatch(4, 1)!;
+		expect(initial.rows).toEqual(["abcd", "efgh"]);
+		transcript.acknowledgeFinalizedBatch(initial.id);
+		transcript.beginReplay();
+		const replay = transcript.peekFinalizedBatch(8, 1)!;
+		expect(replay.rows).toEqual(["abcdefgh"]);
+		expect(transcript.emittedStableRows()).toEqual([1]);
+		expect(transcript.blockStates()).toEqual(["active"]);
+		const retry = transcript.rerenderOfferedBatch(4, 1)!;
+		expect(retry.rows).toEqual(["abcd", "efgh"]);
+		expect(retry.id).toBe(replay.id);
+		transcript.acknowledgeFinalizedBatch(replay.id);
+		expect(transcript.emittedStableRows()).toEqual([1]);
+		expect(transcript.blockStates()).toEqual(["active"]);
+		expect(transcript.renderViewport(4, 1, frame)).toEqual(["partial"]);
+	});
+
+	it("retains an empty replay offer until a discarded frame can be replanned under pressure", () => {
+		const transcript = new TranscriptContainer();
+		const finished = new Block(["INTRO", "", "TITLE", "HEADER", "ROW01", "TAIL"], true);
+		const active = new Block(["active"], false);
+		transcript.addChild(finished);
+		transcript.addChild(active);
+		transcript.beginReplay();
+		const replay = transcript.peekFinalizedBatch(80, 8)!;
+		expect(replay.kind).toBe("replay");
+		expect(replay.rows).toEqual([]);
+		expect(transcript.peekFinalizedBatch(80, 8)?.id).toBe(replay.id);
+		expect(transcript.canRemoveBlock(finished)).toBe(true);
+		expect(transcript.blockStates()).toEqual(["settled", "active"]);
+		const retry = transcript.rerenderOfferedBatch(40, 1)!;
+		expect(retry.id).toBe(replay.id);
+		expect(retry.rows).toEqual(["INTRO", "", "TITLE", "HEADER", "ROW01", "TAIL", ""]);
+		expect(transcript.renderViewport(40, 1, frame)).toEqual(["active"]);
+		expect(transcript.blockStates()).toEqual(["settled", "active"]);
+		transcript.acknowledgeFinalizedBatch(retry.id);
+		expect(transcript.blockStates()).toEqual(["committed", "active"]);
+		expect(active.isTranscriptBlockFinalized()).toBe(false);
+	});
 });
 
 describe("TranscriptContainer", () => {

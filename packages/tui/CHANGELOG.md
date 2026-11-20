@@ -5,6 +5,7 @@
 ### Fixed
 
 - Fixed `bash.color` output losing its colors on the agent's bash tool card; it now shows the same styling as `!` commands
+- Fixed completed replies losing their opening text or table headers during scrollback rebuilds after a resize or display reset
 
 ## [19.0.0] - 2026-11-18
 

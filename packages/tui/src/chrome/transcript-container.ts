@@ -706,8 +706,7 @@ export class TranscriptContainer extends Container {
 	}
 
 	/** Index into `live` of the first non-empty block when history owes it a separator, else -1. */
-	#owedLead(live: readonly { entry: TranscriptEntry; index: number }[], width: number): number {
-		const historyEnd = this.#projectedHistoryEnd();
+	#owedLead(live: readonly { entry: TranscriptEntry; index: number }[], width: number, historyEnd: RowsAbove): number {
 		if (historyEnd === undefined) return -1;
 		for (let cursor = 0; cursor < live.length; cursor++) {
 			const { entry, index } = live[cursor]!;
@@ -975,12 +974,12 @@ export class TranscriptContainer extends Container {
 	peekReplayBatch(width: number): HistoryBatch | undefined {
 		this.#syncEntries();
 		this.#settleFinalized();
-		return this.#peekReplayBatch(width);
+		return this.#peekReplayBatch(width, undefined, "pressure");
 	}
 
-	#peekReplayBatch(width: number): HistoryBatch | undefined {
+	#peekReplayBatch(width: number, capacity: number | undefined, policy: RetirementPolicy): HistoryBatch | undefined {
 		if (this.#offered !== undefined) {
-			return this.#offered.kind === "replay" ? this.#offered.batch : undefined;
+			return this.#offered.batch.kind === "replay" ? this.#offered.batch : undefined;
 		}
 		if (!this.#replayPending) return undefined;
 		// The one path that must compose the whole ledger in a single frame; the
@@ -989,18 +988,33 @@ export class TranscriptContainer extends Container {
 		let replay: { rows: readonly string[]; historyEnd: RowsAbove };
 		try {
 			replay = this.#renderReplay(width);
+			// Reflow can displace more finalized rows; retire them in this same
+			// transaction so the reset cannot clip them before the next paint.
+			if (capacity !== undefined) {
+				const retirement = this.#peekBatch(width, capacity, policy, replay);
+				if (retirement !== undefined) {
+					replay = { rows: [...replay.rows, ...retirement.rows], historyEnd: this.#projectedHistoryEnd() };
+				}
+			}
 		} finally {
 			popLoopPhase();
 		}
 		this.#replayPending = false;
-		if (replay.rows.length === 0) {
+		const offered = this.#offered as Offered | undefined;
+		// An empty viewport-aware offer still owns replay intent until ACK.
+		if (replay.rows.length === 0 && offered === undefined && capacity === undefined) {
 			// The cleared history holds no transcript rows.
 			this.#historyEnd = undefined;
 			this.#releaseCommittedRenderCaches();
 			return undefined;
 		}
-		const batch: HistoryBatch = { id: this.#nextBatchId++, rows: replay.rows, kind: "replay" };
-		this.#offered = { batch, kind: "replay", historyEnd: replay.historyEnd };
+		const batch: HistoryBatch = {
+			id: offered?.batch.id ?? this.#nextBatchId++,
+			rows: replay.rows,
+			kind: "replay",
+		};
+		if (offered === undefined) this.#offered = { batch, kind: "replay", historyEnd: replay.historyEnd };
+		else offered.batch = batch;
 		return batch;
 	}
 
@@ -1010,9 +1024,26 @@ export class TranscriptContainer extends Container {
 	}
 
 	/** Recompose the unacknowledged batch so a discarded TUI frame can be rendered again. */
-	rerenderOfferedBatch(width: number): HistoryBatch | undefined {
+	rerenderOfferedBatch(width: number, capacity: number): HistoryBatch | undefined {
 		const offered = this.#offered;
 		if (offered === undefined) return undefined;
+		if (offered.batch.kind === "replay") {
+			const pending = this.#replayPending;
+			this.#offered = undefined;
+			this.#replayPending = true;
+			try {
+				const replay = this.#peekReplayBatch(width, capacity, "pressure");
+				const batch: HistoryBatch = { id: offered.batch.id, rows: replay?.rows ?? EMPTY_ROWS, kind: "replay" };
+				const refreshed = this.#offered as Offered | undefined;
+				if (refreshed === undefined) this.#offered = { batch, kind: "replay", historyEnd: undefined };
+				else refreshed.batch = batch;
+				return batch;
+			} catch (error) {
+				this.#offered = offered;
+				this.#replayPending = pending;
+				throw error;
+			}
+		}
 		let rows: readonly string[];
 		if (offered.kind === "append") {
 			const entry = this.#entries[offered.entry];
@@ -1064,11 +1095,16 @@ export class TranscriptContainer extends Container {
 		return offered.batch;
 	}
 
-	#peekBatch(width: number, capacity: number, policy: RetirementPolicy): HistoryBatch | undefined {
+	#peekBatch(
+		width: number,
+		capacity: number,
+		policy: RetirementPolicy,
+		replayHistory?: { historyEnd: RowsAbove },
+	): HistoryBatch | undefined {
 		this.#syncEntries();
 		this.#settleFinalized();
 		if (this.#offered !== undefined) return this.#offered.batch;
-		const replay = this.#peekReplayBatch(width);
+		const replay = replayHistory === undefined ? this.#peekReplayBatch(width, capacity, policy) : undefined;
 		if (replay !== undefined) return replay;
 
 		this.#completeFullyEmittedHeads(width);
@@ -1098,7 +1134,8 @@ export class TranscriptContainer extends Container {
 		// append path below needs the exact live height to size its emission,
 		// and only runs while a streaming head pins retirement. Heights include
 		// the separator below each block, and above the first one if history owes it.
-		const lead = this.#owedLead(live, width);
+		const above = replayHistory === undefined ? this.#historyEnd : replayHistory.historyEnd;
+		const lead = this.#owedLead(live, width, above);
 		let tailRows = 0;
 		let liveRows = 0;
 		let keep = 0;
@@ -1220,8 +1257,8 @@ export class TranscriptContainer extends Container {
 				this.#frontier,
 				end,
 				width,
-				this.#historyEnd,
-				policy === "flush" ? undefined : RETIREMENT_BUDGET_MS,
+				above,
+				policy === "flush" || replayHistory !== undefined ? undefined : RETIREMENT_BUDGET_MS,
 			);
 			rows = retirement.rows;
 			reached = retirement.end;
@@ -1332,9 +1369,9 @@ export class TranscriptContainer extends Container {
 				streaming.emitted = streamingEnd;
 			}
 		} else {
-			this.#releaseCommittedRenderCaches();
 			this.#historyEnd = offered.historyEnd;
 		}
+		if (offered.batch.kind === "replay") this.#releaseCommittedRenderCaches();
 		this.#offered = undefined;
 		if (this.#replayRequested) this.#startReplay();
 	}
@@ -1894,9 +1931,7 @@ export class TranscriptContainer extends Container {
 	}
 
 	#startReplay(): void {
-		const head = this.#entries[this.#frontier];
-		this.#replayPending =
-			this.#frontier > 0 || head?.split !== undefined || (head?.mode === "appendOnly" && head.emitted > 0);
+		this.#replayPending = true;
 		this.#replayRequested = false;
 	}
 

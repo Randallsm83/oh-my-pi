@@ -266,7 +266,7 @@ describe("committed transcript blocks release render caches", () => {
 		const offered = transcript.peekReplayBatch(80);
 		if (!offered) throw new Error("expected a replay batch");
 		expect(block.releases).toBe(1);
-		expect(transcript.rerenderOfferedBatch(60)?.rows).toEqual(["committed", ""]);
+		expect(transcript.rerenderOfferedBatch(60, 40)?.rows).toEqual(["committed", ""]);
 		expect(block.releases).toBe(1);
 
 		transcript.acknowledgeFinalizedBatch(offered.id);

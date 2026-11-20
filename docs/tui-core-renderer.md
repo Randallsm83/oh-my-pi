@@ -56,6 +56,14 @@ current width; open Markdown and the current partial suffix remain mutable. Unde
 only the current logical head can emit enough stable rows to relieve overflow without finalizing. Final
 retirement writes only its un-emitted suffix.
 
+Replay planning also measures pressure at the current viewport capacity. Any
+newly displaced finalized prefix joins the replay in the same offered batch,
+so rebuilding history cannot expose a frame with that prefix missing between
+the replayed ledger and the live tail. Acknowledgement advances that retirement
+only after the combined terminal write is accepted; active blocks stay active.
+Viewport-aware planning retains even an empty replay offer until acknowledgement,
+so a discarded frame can be replanned at new geometry without losing replay intent.
+
 ## 2. Rendering a frame
 
 For every frame the TUI:

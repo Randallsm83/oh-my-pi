@@ -961,7 +961,7 @@ export class Composer implements TerminalFrameProvider, NativeSurfaceProvider {
 		chromeRows: number,
 	): { id: number; rows: readonly string[]; kind: "append" | "replay" } | undefined {
 		if (this.#offeredHistory !== undefined) {
-			this.#rerenderOfferedHistory(width);
+			this.#rerenderOfferedHistory(width, Math.max(0, rows - chromeRows));
 			return {
 				id: this.#offeredHistory.id,
 				rows: this.#offeredHistory.rows,
@@ -969,7 +969,7 @@ export class Composer implements TerminalFrameProvider, NativeSurfaceProvider {
 			};
 		}
 		if (this.#headerReplayPending) {
-			const transcriptReplay = transcript.peekReplayBatch(width);
+			const transcriptReplay = transcript.peekFinalizedBatch(width, Math.max(0, rows - chromeRows));
 			// A replay follows a scrollback clear, so the header recomposes at
 			// the new width exactly like transcript entries do. An empty
 			// recompose (welcome unmounted after retirement) falls back to the
@@ -1036,7 +1036,7 @@ export class Composer implements TerminalFrameProvider, NativeSurfaceProvider {
 		};
 	}
 
-	#rerenderOfferedHistory(width: number): void {
+	#rerenderOfferedHistory(width: number, capacity: number): void {
 		const offered = this.#offeredHistory;
 		if (offered === undefined) return;
 		if (offered.source === "header") {
@@ -1044,7 +1044,7 @@ export class Composer implements TerminalFrameProvider, NativeSurfaceProvider {
 			offered.rows = rows.length > 0 ? [...rows, ""] : [];
 			return;
 		}
-		const transcript = offered.source.transcript.rerenderOfferedBatch(width);
+		const transcript = offered.source.transcript.rerenderOfferedBatch(width, capacity);
 		if (offered.source.header === "none") {
 			if (transcript !== undefined) offered.rows = transcript.rows;
 			return;
